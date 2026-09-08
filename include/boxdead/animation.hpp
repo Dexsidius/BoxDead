@@ -47,6 +47,7 @@ public:
 
     Texture* texture() const { return current_ ? current_->texture : nullptr; }
     const SDL_FRect* frame() const;
+    size_t frame_index() const { return index_; }
     bool finished() const { return finished_; }
 
 private:

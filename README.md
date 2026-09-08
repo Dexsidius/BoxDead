@@ -13,9 +13,12 @@ A re-edition of Boxhead built in C++ with SDL3.
 - **macOS (Homebrew):** `brew install sdl3 sdl3-ttf`
 - **Debian/Ubuntu:** `apt install libsdl3-dev libsdl3-ttf-dev`
 - **Arch:** `pacman -S sdl3 sdl3_ttf`
-- **Windows (vcpkg):** `vcpkg install sdl3`
-- **No package manager?** Build with `-DBOXDEAD_FETCH_SDL3=ON` and CMake
-  fetches SDL3 from source automatically (no preinstall needed).
+- **Windows (vcpkg):** `vcpkg install sdl3 sdl3-ttf`
+- **No package manager?** Pass `-DBOXDEAD_FETCH_SDL3=ON` and CMake fetches
+  SDL3 from source automatically. SDL3_ttf still needs to be installed
+  separately (it is only used for text, so you can also remove the
+  `find_package(SDL3_ttf ...)` line and font rendering if you want a
+  dependency-free build).
 
 ## Build
 
@@ -84,6 +87,8 @@ include/boxdead/        - public headers (one responsibility each)
   projectile.hpp        - Projectile (bullet + hit damage)
   weapon.hpp            - WeaponKind + WeaponSpec profiles
   item.hpp              - Item base + HealthPickup + WeaponPickup
+  animation.hpp         - Animation (sprite-sheet frames) + Animator
+  animated_entity.hpp   - AnimatedEntity base (Player/Enemy derive from it)
   font.hpp              - Font (RAII TTF_Font + cached text textures)
   menu.hpp              - Menu (navigable text menu)
   game.hpp              - Game class (state machine + loop + systems)
@@ -93,6 +98,7 @@ src/                    - implementations
                           item pickups, rendering, HUD
   player.cpp / enemy.cpp / projectile.cpp
   weapon.cpp / item.cpp / menu.cpp / font.cpp
+  animation.cpp / animated_entity.cpp
   texture.cpp / sprite.cpp / entity.cpp
 assets/dejavu-sans.ttf   - bundled TrueType font for text rendering
 ```
@@ -123,6 +129,25 @@ pixels per second regardless of FPS, so it feels the same on 60 Hz and
 144 Hz displays. Diagonal movement is normalized so it isn't faster than
 cardinal movement.
 
+## Animations
+
+Player and enemy characters are animated. An `Animation` is a horizontal
+sprite sheet of equal-sized frames played left-to-right at a fixed frame
+duration; an `Animator` plays named animations and tracks the current frame.
+`Player` and `Enemy` derive from `AnimatedEntity`, which owns an `Animator` and
+renders the current frame (keeping the entity color as the tint, so the
+player's i-frame flash still works). Lightweight entities (projectiles, items)
+stay simple and skip animation overhead.
+
+- **Player** switches between `walk` (4 frames) while moving and `idle`
+  (2 frames, body bob) when standing still.
+- **Enemies** run a `walk` cycle continuously while chasing.
+
+The walk/idle sprite sheets are generated procedurally (`make_walk_sheet_texture`)
+so the boxman has a body, a border, and two legs whose heights alternate per
+frame to read as a walk cycle. Swap them for real sprite sheets later by loading
+a horizontal strip and slicing it with `make_animation()`.
+
 ## Smoke test (no display required)
 
 ```bash
@@ -131,10 +156,17 @@ SDL_VIDEO_DRIVER=dummy ./build/BoxDead --smoke-test
 
 Runs a ~15-second headless scenario (auto-firing at enemies, forcing item
 spawns on the player) and prints a summary line — useful for CI or headless
-environments. There is also a pure weapon-logic unit test:
+environments. The summary includes `enemy_frame`, a live enemy's current
+animation frame, proving the animator ticks. There are also pure unit tests:
 
 ```bash
+# Animator: frame advance + looping.
+g++ -std=c++20 -I include test_animator.cpp src/animation.cpp -o test_animator
+./test_animator
+
+# Player weapon state: equip / consume / auto-revert.
 g++ -std=c++20 -I include test_weapon.cpp src/player.cpp src/weapon.cpp \
-    src/entity.cpp src/sprite.cpp src/texture.cpp -lSDL3 -o test_weapon
+    src/entity.cpp src/animated_entity.cpp src/animation.cpp \
+    src/sprite.cpp src/texture.cpp -lSDL3 -o test_weapon
 ./test_weapon
 ```

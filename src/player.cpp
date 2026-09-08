@@ -9,7 +9,7 @@
 namespace bd {
 
 Player::Player(float x, float y)
-    : Entity(x, y, 32.0f, 32.0f), speed_(320.0f) {
+    : AnimatedEntity(x, y, 32.0f, 32.0f), speed_(320.0f) {
     health = 5;  // player survives 5 enemy hits
     sprite_.color = SDL_Color{255, 255, 255, 255};  // no tint by default
 }
@@ -65,6 +65,10 @@ void Player::update(float dt, const GameContext& ctx) {
     const float hh = size.y * 0.5f;
     pos.x = std::clamp(pos.x, hw, ctx.world_w - hw);
     pos.y = std::clamp(pos.y, hh, ctx.world_h - hh);
+
+    // Drive the animation: walk while moving, idle otherwise.
+    play_animation(dx != 0.0f || dy != 0.0f ? "walk" : "idle");
+    update_animator(dt);
 }
 
 }  // namespace bd

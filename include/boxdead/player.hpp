@@ -1,14 +1,14 @@
 // BoxDead - Player entity (keyboard-driven, holds the active weapon)
 #pragma once
 
-#include "boxdead/entity.hpp"
+#include "boxdead/animated_entity.hpp"
 #include "boxdead/weapon.hpp"
 
 #include <string>
 
 namespace bd {
 
-class Player : public Entity {
+class Player : public AnimatedEntity {
 public:
     explicit Player(float x, float y);
 

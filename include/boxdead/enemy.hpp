@@ -1,11 +1,11 @@
 // BoxDead - Enemy entity (chases the player)
 #pragma once
 
-#include "boxdead/entity.hpp"
+#include "boxdead/animated_entity.hpp"
 
 namespace bd {
 
-class Enemy : public Entity {
+class Enemy : public AnimatedEntity {
 public:
     explicit Enemy(float x, float y);
 

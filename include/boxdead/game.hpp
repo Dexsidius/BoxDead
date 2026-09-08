@@ -79,6 +79,7 @@ private:
     float item_spawn_timer_ = 0.0f;
     int pickups_collected_ = 0;
     int smoke_frame_ = 0;
+    int max_enemy_anim_frame_ = -1;  // highest enemy anim frame seen this run
     std::string pickup_toast_;
     float pickup_toast_timer_ = 0.0f;
 
@@ -89,8 +90,9 @@ private:
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
-    std::unique_ptr<Texture> player_tex_;
-    std::unique_ptr<Texture> enemy_tex_;
+    std::unique_ptr<Texture> player_walk_sheet_;
+    std::unique_ptr<Texture> player_idle_sheet_;
+    std::unique_ptr<Texture> enemy_walk_sheet_;
     std::unique_ptr<Texture> projectile_tex_;
     std::unique_ptr<Texture> health_tex_;
     std::unique_ptr<Texture> weapon_tex_pistol_;

@@ -33,4 +33,15 @@ std::unique_ptr<Texture> make_cross_sprite_texture(SDL_Renderer* r,
                                                     SDL_Color cross,
                                                     int size = 22);
 
+// Procedurally generate a horizontal sprite sheet of `frame_count` walk/idle
+// frames for a boxman character. When `moving`, the two legs alternate height
+// per frame to simulate a walk cycle; when idle, the legs stand still and the
+// body bobs. Pixels outside the body are transparent (blend mode is set by
+// Texture::from_pixels). Each frame is `frame_size` pixels wide.
+std::unique_ptr<Texture> make_walk_sheet_texture(SDL_Renderer* r,
+                                                 SDL_Color base,
+                                                 int frame_count,
+                                                 int frame_size,
+                                                 bool moving);
+
 }  // namespace bd

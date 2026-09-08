@@ -50,10 +50,12 @@ bool Game::init() {
         return false;
     }
 
-    player_tex_ = make_solid_sprite_texture(
-        renderer_, SDL_Color{60, 160, 255, 255}, 32);
-    enemy_tex_ =
-        make_solid_sprite_texture(renderer_, SDL_Color{220, 45, 45, 255}, 32);
+    player_walk_sheet_ = make_walk_sheet_texture(
+        renderer_, SDL_Color{60, 160, 255, 255}, 4, 32, true);
+    player_idle_sheet_ = make_walk_sheet_texture(
+        renderer_, SDL_Color{60, 160, 255, 255}, 2, 32, false);
+    enemy_walk_sheet_ = make_walk_sheet_texture(
+        renderer_, SDL_Color{220, 45, 45, 255}, 4, 32, true);
     projectile_tex_ = make_solid_sprite_texture(
         renderer_, SDL_Color{255, 220, 60, 255}, 8);
     health_tex_ = make_cross_sprite_texture(
@@ -105,7 +107,9 @@ bool Game::init() {
 
     auto player =
         std::make_unique<Player>(kWindowWidth * 0.5f, kWindowHeight * 0.5f);
-    player->set_texture(player_tex_.get());
+    player->add_animation("walk", player_walk_sheet_.get(), 4, 32, 0.12f, true);
+    player->add_animation("idle", player_idle_sheet_.get(), 2, 32, 0.28f, true);
+    player->play_animation("idle");
     player_ = player.get();
     if (smoke_test_) player_->health = 1000;  // survive the whole smoke run
     entities_.push_back(std::move(player));
@@ -126,7 +130,10 @@ void Game::run() {
         std::cerr << "smoke: kills=" << score_ << " wave=" << wave_
                   << " hp=" << player_->health
                   << " weapon=" << player_->weapon_name()
-                  << " pickups=" << pickups_collected_ << '\n';
+                  << " pickups=" << pickups_collected_;
+        // Report the highest enemy animation frame seen during the run to
+        // prove the animator ticked (robust even if all enemies die late).
+        std::cerr << " enemy_frame=" << max_enemy_anim_frame_ << '\n';
         return;
     }
 
@@ -293,6 +300,18 @@ void Game::update(float dt) {
         if (e.get() != player_) e->update(dt, ctx);
     }
 
+    // In smoke, record the highest enemy animation frame seen so the summary
+    // proves the animator ticked even if every enemy dies before the run ends.
+    if (smoke_test_) {
+        for (const auto& e : entities_) {
+            auto* en = dynamic_cast<Enemy*>(e.get());
+            if (en && en->alive) {
+                const int f = static_cast<int>(en->animator_frame_index());
+                if (f > max_enemy_anim_frame_) max_enemy_anim_frame_ = f;
+            }
+        }
+    }
+
     // Tick the player's post-hit invulnerability window.
     if (invuln_timer_ > 0.0f) {
         invuln_timer_ -= dt;
@@ -357,7 +376,8 @@ void Game::spawn_enemy(const GameContext& ctx) {
             break;
     }
     auto e = std::make_unique<Enemy>(x, y);
-    e->set_texture(enemy_tex_.get());
+    e->add_animation("walk", enemy_walk_sheet_.get(), 4, 32, 0.14f, true);
+    e->play_animation("walk");
     entities_.push_back(std::move(e));
 }
 
@@ -668,13 +688,16 @@ void Game::reset() {
     wave_timer_ = 0.0f;
     item_spawn_timer_ = 0.0f;
     pickups_collected_ = 0;
+    max_enemy_anim_frame_ = -1;
     pickup_toast_timer_ = 0.0f;
     pickup_toast_.clear();
     state_ = GameState::Playing;
 
     auto player =
         std::make_unique<Player>(kWindowWidth * 0.5f, kWindowHeight * 0.5f);
-    player->set_texture(player_tex_.get());
+    player->add_animation("walk", player_walk_sheet_.get(), 4, 32, 0.12f, true);
+    player->add_animation("idle", player_idle_sheet_.get(), 2, 32, 0.28f, true);
+    player->play_animation("idle");
     player_ = player.get();
     entities_.push_back(std::move(player));
 }

@@ -1,6 +1,7 @@
 // BoxDead - Sprite implementation
 #include "boxdead/sprite.hpp"
 
+#include <algorithm>
 #include <vector>
 
 namespace bd {
@@ -77,6 +78,68 @@ std::unique_ptr<Texture> make_cross_sprite_texture(SDL_Renderer* r,
         }
     }
     return Texture::from_pixels(r, pixels.data(), size, size);
+}
+
+std::unique_ptr<Texture> make_walk_sheet_texture(SDL_Renderer* r,
+                                                 SDL_Color base,
+                                                 int frame_count,
+                                                 int frame_size,
+                                                 bool moving) {
+    const int sheet_w = frame_count * frame_size;
+    const int sheet_h = frame_size;
+    std::vector<Uint32> pixels(static_cast<size_t>(sheet_w) * sheet_h, 0);
+
+    const SDL_Color dark{static_cast<Uint8>(base.r * 0.5f),
+                         static_cast<Uint8>(base.g * 0.5f),
+                         static_cast<Uint8>(base.b * 0.5f), 255};
+    const SDL_Color leg{static_cast<Uint8>(base.r * 0.65f),
+                        static_cast<Uint8>(base.g * 0.65f),
+                        static_cast<Uint8>(base.b * 0.65f), 255};
+
+    const int b = std::max(2, frame_size / 12);  // border thickness
+    const int body_top = b;
+    const int body_h = frame_size * 7 / 10;    // body occupies the top 70%
+    const int leg_top = body_h;
+    const int leg_region = frame_size - leg_top - b;
+    const int leg_w = std::max(3, frame_size / 7);
+    const int leg_x[2] = {frame_size * 3 / 10 - leg_w / 2,
+                          frame_size * 7 / 10 - leg_w / 2};
+
+    auto fill_rect = [&](int ox, int x0, int y0, int w0, int h0,
+                         Uint32 col) {
+        for (int yy = 0; yy < h0; ++yy) {
+            for (int xx = 0; xx < w0; ++xx) {
+                const int px = ox + x0 + xx;
+                const int py = y0 + yy;
+                if (px >= 0 && px < sheet_w && py >= 0 && py < sheet_h)
+                    pixels[static_cast<size_t>(py) * sheet_w + px] = col;
+            }
+        }
+    };
+
+    for (int f = 0; f < frame_count; ++f) {
+        const int ox = f * frame_size;  // frame origin x
+        const int bob = moving ? 0 : ((f % 2 == 0) ? 0 : 1);
+
+        // Body: dark border + base fill, centered, with a small bob.
+        fill_rect(ox, b, body_top + bob, frame_size - 2 * b, body_h - 2 * b,
+                  pack_color(dark));
+        fill_rect(ox, b + 1, body_top + bob + 1, frame_size - 2 * b - 2,
+                  body_h - 2 * b - 2, pack_color(base));
+
+        // Two legs; heights alternate per frame when walking.
+        for (int side = 0; side < 2; ++side) {
+            int lh = leg_region;
+            if (moving) {
+                const bool forward = (f % 2 == 0) == (side == 0);
+                lh = leg_region * (forward ? 1.0f : 0.55f);
+            }
+            fill_rect(ox, leg_x[side], leg_top + (leg_region - lh), leg_w, lh,
+                      pack_color(leg));
+        }
+    }
+
+    return Texture::from_pixels(r, pixels.data(), sheet_w, sheet_h);
 }
 
 }  // namespace bd
