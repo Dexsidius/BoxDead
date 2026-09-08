@@ -113,11 +113,13 @@ to use real BMP assets (add SDL_image for PNG/JPG).
 - **WASD** or **Arrow keys** - move the player
 - **Mouse** - aim
 - **Space** or **Left mouse** - fire
+- **1 / 2 / 3** - switch to Pistol / Shotgun / Machine Gun (owned weapons only)
+- **Q / E** - cycle to the previous / next owned weapon
 - **Up/Down** (or W/S) + **Enter** - navigate menus; mouse hover/click works too
 - **Esc** - back / quit (context-dependent)
 - **R** - restart after GAME OVER
 
-Projectiles fire toward the mouse cursor using the player's current weapon
+Projectiles fire toward the aim direction using the player's current weapon
 profile (cooldown, projectile count, and spread cone). A projectile that hits
 an enemy applies the weapon's damage and may drop an item. Enemies spawn at
 the edges and chase the player; touching the player deals 1 damage with a
@@ -160,10 +162,39 @@ with a tie and blood, and two legs running a 4-phase walk):
   Inherits the zombie's behavior (same speed and chase AI) but is tougher at
   2 HP. Starts appearing from wave 2 onward (25% chance per spawn).
 
+## Isometric characters
+
+Characters (player and enemies) render as isometric 3D box figures drawn
+per frame with `SDL_RenderGeometry`. Each figure has a ground shadow, two
+animated legs (alternating height with the walk cycle), a torso with three
+shaded faces (top / front / side), and a head. The body rotates to face the
+aim direction (8-way yaw) so the visible faces track where the character is
+facing. The player additionally holds the current gun in-hand, rotated to the
+aim angle. Entities are drawn back-to-front by ground position so closer
+characters correctly overlap further ones.
+
+## Inventory & weapons
+
+The player carries a 3-slot inventory: Pistol (slot 1, infinite ammo), Shotgun
+(slot 2), and Machine Gun (slot 3). Weapon pickups are added to the inventory
+(or refill ammo if already owned). Switch with **1/2/3** or cycle with **Q/E**;
+the HUD lists every owned weapon, highlights the selected one, and greys out
+dry weapons. Running out of ammo on a finite weapon auto-switches back to the
+Pistol so you are never stuck. The aim mode (Face Mouse vs Face Movement) can
+be toggled in the Options menu.
+
+## Scenes / levels
+
+The game spans multiple maps. Every 15 waves the world transitions to the next
+scene: a fade-to-black, then the new map swaps in (floor palette + level name
+banner), enemies and projectiles are cleared, and the player is recentered.
+Levels cycle (Courtyard -> Asylum -> Sewers -> Graveyard -> Hell's Gate) so
+play continues indefinitely with a changing backdrop.
+
 ## Windows build
 
 A prebuilt Windows x64 build is included in `dist/` of this repo:
-`dist/BoxDead-v0.1.1-windows-x64.zip`. Unzip it and double-click
+`dist/BoxDead-v0.1.2-windows-x64.zip`. Unzip it and double-click
 `BoxDead.exe`; keep `SDL3.dll`, `SDL3_ttf.dll`, and the `assets/` folder next
 to the exe. It is cross-compiled from Linux with MinGW-w64 against SDL3 3.4.16
 and SDL3_ttf 3.2.2 and bundles the runtime DLLs and font.
