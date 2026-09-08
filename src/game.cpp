@@ -1,7 +1,8 @@
-// BoxDead - Game implementation: owns the main loop, spawning, firing,
-// collisions, and rendering. main.cpp is a thin bootstrap around this class.
+// BoxDead - Game implementation: owns the main loop, menu, spawning, firing,
+// collisions, item pickups, and rendering. main.cpp is a thin bootstrap.
 #include "boxdead/game.hpp"
 
+#include "boxdead/item.hpp"
 #include "boxdead/sprite.hpp"
 
 #include <SDL3/SDL.h>
@@ -11,6 +12,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
+#include <string>
+#include <vector>
 
 namespace bd {
 
@@ -20,9 +23,14 @@ constexpr int kWindowHeight = 720;
 constexpr char kWindowTitle[] = "BoxDead";
 constexpr float kSpawnInterval = 1.2f;    // seconds between enemy spawns
 constexpr size_t kMaxEnemies = 50;
-constexpr float kFireInterval = 0.18f;    // seconds between shots
+constexpr float kFireInterval = 0.18f;    // fallback cooldown (unused now)
 constexpr float kProjectileSpeed = 600.0f;
-constexpr float kInvulnDuration = 1.2f;  // seconds of i-frames after a hit
+constexpr float kInvulnDuration = 1.2f;   // seconds of i-frames after a hit
+constexpr int kPlayerMaxHp = 5;
+constexpr float kItemSpawnInterval = 12.0f;  // seconds between floor item spawns
+constexpr int kMaxFloorItems = 3;
+
+const std::vector<std::string> kMainMenuItems = {"New Game", "Options", "Exit"};
 }  // namespace
 
 Game::Game(bool smoke_test) : smoke_test_(smoke_test) {}
@@ -48,18 +56,80 @@ bool Game::init() {
         make_solid_sprite_texture(renderer_, SDL_Color{220, 45, 45, 255}, 32);
     projectile_tex_ = make_solid_sprite_texture(
         renderer_, SDL_Color{255, 220, 60, 255}, 8);
+    health_tex_ = make_cross_sprite_texture(
+        renderer_, SDL_Color{40, 170, 70, 255}, SDL_Color{255, 255, 255, 255},
+        22);
+    weapon_tex_pistol_ = make_solid_sprite_texture(
+        renderer_, SDL_Color{200, 200, 210, 255}, 22);
+    weapon_tex_shotgun_ = make_solid_sprite_texture(
+        renderer_, SDL_Color{230, 140, 40, 255}, 22);
+    weapon_tex_machinegun_ = make_solid_sprite_texture(
+        renderer_, SDL_Color{70, 200, 230, 255}, 22);
+
+    if (!TTF_Init()) {
+        std::cerr << "TTF_Init failed: " << SDL_GetError() << '\n';
+        return false;
+    }
+    // assets/dejavu-sans.ttf is resolved relative to the executable. Try a
+    // few candidate locations so it works from the build dir and a deployed
+    // layout next to the executable.
+    const char* base = SDL_GetBasePath();
+    const std::string base_dir = base ? std::string(base) : std::string("");
+    if (base) SDL_free(const_cast<char*>(base));
+    const std::vector<std::string> font_candidates = {
+        base_dir + "assets/dejavu-sans.ttf",
+        base_dir + "../assets/dejavu-sans.ttf",
+        base_dir + "../../assets/dejavu-sans.ttf",
+        "assets/dejavu-sans.ttf",
+        "../assets/dejavu-sans.ttf",
+    };
+    bool font_ok = false;
+    std::string font_path;
+    for (const std::string& p : font_candidates) {
+        if (font_.load(renderer_, p, 24)) {
+            font_ok = true;
+            font_path = p;
+            break;
+        }
+    }
+    if (!font_ok) {
+        std::cerr << "Font load failed (tried " << font_candidates.size()
+                  << " paths under " << base_dir << ")\n";
+        return false;
+    }
 
     std::srand(static_cast<unsigned>(std::time(nullptr)));
+
+    menu_.set_items(kMainMenuItems);
+    state_ = smoke_test_ ? GameState::Playing : GameState::MainMenu;
 
     auto player =
         std::make_unique<Player>(kWindowWidth * 0.5f, kWindowHeight * 0.5f);
     player->set_texture(player_tex_.get());
     player_ = player.get();
+    if (smoke_test_) player_->health = 1000;  // survive the whole smoke run
     entities_.push_back(std::move(player));
     return true;
 }
 
 void Game::run() {
+    if (smoke_test_) {
+        // Drive a short fixed-step headless scenario so combat, enemy drops,
+        // and item pickups are all exercised without a display.
+        bool running = true;
+        const float dt = 1.0f / 60.0f;
+        for (int i = 0; i < 900 && running; ++i) {
+            process_input(running);
+            update(dt);
+            render();
+        }
+        std::cerr << "smoke: kills=" << score_ << " wave=" << wave_
+                  << " hp=" << player_->health
+                  << " weapon=" << player_->weapon_name()
+                  << " pickups=" << pickups_collected_ << '\n';
+        return;
+    }
+
     Uint64 last_time = SDL_GetTicksNS();
     bool running = true;
     while (running) {
@@ -68,32 +138,117 @@ void Game::run() {
         last_time = now;
         if (dt > 0.25f) dt = 0.25f;  // avoid spiral of death after stalls
 
-        handle_events(running);
+        process_input(running);
         update(dt);
         render();
 
-        if (smoke_test_ || game_over_) running = false;  // one frame, for CI
-        SDL_Delay(1);                       // yield CPU
+        SDL_Delay(1);  // yield CPU
     }
 }
 
-void Game::handle_events(bool& running) {
+void Game::process_input(bool& running) {
+    int win_w = kWindowWidth;
+    int win_h = kWindowHeight;
+    SDL_GetWindowSize(window_, &win_w, &win_h);
+    const float ww = static_cast<float>(win_w);
+    const float wh = static_cast<float>(win_h);
+
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
-        switch (event.type) {
-            case SDL_EVENT_QUIT:
-                running = false;
+        if (event.type == SDL_EVENT_QUIT) {
+            running = false;
+            return;
+        }
+        switch (state_) {
+            case GameState::MainMenu: {
+                if (event.type == SDL_EVENT_KEY_DOWN &&
+                    event.key.key == SDLK_ESCAPE) {
+                    running = false;
+                    break;
+                }
+                int c = menu_.handle_event(event, ww, wh);
+                if (c >= 0) on_main_menu_select(c, running);
                 break;
-            case SDL_EVENT_KEY_DOWN:
-                if (event.key.key == SDLK_ESCAPE) running = false;
+            }
+            case GameState::Options: {
+                if (event.type == SDL_EVENT_KEY_DOWN &&
+                    event.key.key == SDLK_ESCAPE) {
+                    return_to_menu();
+                    break;
+                }
+                int c = menu_.handle_event(event, ww, wh);
+                if (c >= 0) on_options_select(c);
                 break;
-            default:
+            }
+            case GameState::Playing:
+                if (event.type == SDL_EVENT_KEY_DOWN &&
+                    event.key.key == SDLK_ESCAPE) {
+                    return_to_menu();
+                }
+                break;
+            case GameState::GameOver:
+                if (event.type == SDL_EVENT_KEY_DOWN) {
+                    if (event.key.key == SDLK_ESCAPE) {
+                        return_to_menu();
+                    } else if (event.key.key == SDLK_R) {
+                        reset();
+                    }
+                }
                 break;
         }
     }
 }
 
+void Game::on_main_menu_select(int index, bool& running) {
+    if (index == 0) {
+        reset();  // New Game
+    } else if (index == 1) {
+        enter_options();
+    } else if (index == 2) {
+        running = false;  // Exit
+    }
+}
+
+void Game::enter_options() {
+    state_ = GameState::Options;
+    menu_.set_items({"Difficulty: " + difficulty_label(), "Back"});
+    menu_.reset();
+}
+
+void Game::on_options_select(int index) {
+    if (index == 0) {
+        difficulty_ = (difficulty_ + 1) % 3;  // cycle Easy/Normal/Hard
+        menu_.set_items({"Difficulty: " + difficulty_label(), "Back"});
+    } else if (index == 1) {
+        return_to_menu();
+    }
+}
+
+void Game::return_to_menu() {
+    state_ = GameState::MainMenu;
+    menu_.set_items(kMainMenuItems);
+    menu_.reset();
+}
+
+std::string Game::difficulty_label() {
+    switch (difficulty_) {
+        case 0: return "Easy";
+        case 2: return "Hard";
+        default: return "Normal";
+    }
+}
+
+float Game::difficulty_factor() {
+    switch (difficulty_) {
+        case 0: return 1.4f;  // Easy: slower spawns
+        case 2: return 0.7f;  // Hard: faster spawns
+        default: return 1.0f;
+    }
+}
+
 void Game::update(float dt) {
+    if (state_ != GameState::Playing) return;
+
     int draw_w = kWindowWidth;
     int draw_h = kWindowHeight;
     SDL_GetCurrentRenderOutputSize(renderer_, &draw_w, &draw_h);
@@ -110,9 +265,20 @@ void Game::update(float dt) {
     // When the player is dead, freeze the world (no spawns, movement, etc.).
     if (game_over_) return;
 
-    // Spawn enemies on a timer.
+    // Advance waves: each wave raises the spawn rate (shorter interval).
+    wave_timer_ += dt;
+    if (wave_timer_ >= wave_duration_) {
+        wave_timer_ = 0.0f;
+        ++wave_;
+    }
+
+    // Spawn enemies on a timer (rate scales with wave + difficulty).
+    const float spawn_interval =
+        std::max(0.35f, (kSpawnInterval -
+                         0.08f * static_cast<float>(wave_ - 1)) *
+                        difficulty_factor());
     spawn_timer_ += dt;
-    if (spawn_timer_ >= kSpawnInterval) {
+    if (spawn_timer_ >= spawn_interval) {
         spawn_timer_ = 0.0f;
         size_t enemy_count = 0;
         for (const auto& e : entities_)
@@ -134,13 +300,37 @@ void Game::update(float dt) {
     }
 
     check_collisions();
+    check_item_pickups();
 
-    // Reap dead entities (projectiles that hit/expired and dead enemies).
+    // In smoke, force items onto the player periodically so the pickup path
+    // (health + weapons) is exercised even though the player never moves.
+    if (smoke_test_) {
+        ++smoke_frame_;
+        if (smoke_frame_ % 90 == 0) spawn_item_on_player();
+    }
+
+    // Occasionally drop a fresh item on the floor.
+    item_spawn_timer_ += dt;
+    if (item_spawn_timer_ >= kItemSpawnInterval) {
+        item_spawn_timer_ = 0.0f;
+        spawn_floor_item(ctx);
+    }
+
+    // Fade the pickup toast.
+    if (pickup_toast_timer_ > 0.0f) {
+        pickup_toast_timer_ -= dt;
+        if (pickup_toast_timer_ < 0.0f) pickup_toast_timer_ = 0.0f;
+    }
+
+    // Reap dead entities (projectiles that hit/expired, dead enemies, used
+    // items).
     entities_.erase(std::remove_if(entities_.begin(), entities_.end(),
                                    [](const std::unique_ptr<Entity>& e) {
                                        return !e->alive;
                                    }),
                     entities_.end());
+
+    if (game_over_) state_ = GameState::GameOver;
 }
 
 void Game::spawn_enemy(const GameContext& ctx) {
@@ -173,41 +363,90 @@ void Game::spawn_enemy(const GameContext& ctx) {
 
 void Game::fire_projectile(float dt, const GameContext& ctx) {
     fire_cooldown_ -= dt;
-    const bool want_fire =
+    bool want_fire =
         (ctx.keys && ctx.keys[SDL_SCANCODE_SPACE]) ||
         (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK);
+    // Smoke-test auto-fire so combat + pickups are exercised headlessly.
+    if (smoke_test_ && !want_fire) want_fire = true;
     if (!want_fire || fire_cooldown_ > 0.0f) return;
-    fire_cooldown_ = kFireInterval;
 
-    // Scale mouse coords from window space to render output space (HiDPI).
-    int win_w = kWindowWidth;
-    int win_h = kWindowHeight;
-    SDL_GetWindowSize(window_, &win_w, &win_h);
-    float mx = 0.0f;
-    float my = 0.0f;
-    SDL_GetMouseState(&mx, &my);
-    const float sx = ctx.world_w / static_cast<float>(win_w);
-    const float sy = ctx.world_h / static_cast<float>(win_h);
-    float dx = mx * sx - player_->pos.x;
-    float dy = my * sy - player_->pos.y;
-    const float len = std::sqrt(dx * dx + dy * dy);
-    if (len < 0.001f) {
-        dx = 0.0f;
-        dy = -1.0f;
+    // Use the player's current weapon profile (one firing path, no switches).
+    const WeaponSpec w = player_->current_weapon();
+    if (!player_->consume_ammo()) return;
+    fire_cooldown_ = w.cooldown;
+
+    // Aim direction: toward the nearest enemy in smoke, else at the mouse.
+    float dx = 0.0f;
+    float dy = -1.0f;
+    if (smoke_test_) {
+        bool found = false;
+        float best = 1e30f;
+        for (const auto& e : entities_) {
+            auto* en = dynamic_cast<Enemy*>(e.get());
+            if (!en || !en->alive) continue;
+            const float ax = en->pos.x - player_->pos.x;
+            const float ay = en->pos.y - player_->pos.y;
+            const float dd = ax * ax + ay * ay;
+            if (dd < best) {
+                best = dd;
+                dx = ax;
+                dy = ay;
+                found = true;
+            }
+        }
+        if (found) {
+            const float l = std::sqrt(dx * dx + dy * dy);
+            if (l > 0.001f) {
+                dx /= l;
+                dy /= l;
+            } else {
+                dx = 0.0f;
+                dy = -1.0f;
+            }
+        }
     } else {
-        dx /= len;
-        dy /= len;
+        // Scale mouse coords from window space to render output space (HiDPI).
+        int win_w = kWindowWidth;
+        int win_h = kWindowHeight;
+        SDL_GetWindowSize(window_, &win_w, &win_h);
+        float mx = 0.0f;
+        float my = 0.0f;
+        SDL_GetMouseState(&mx, &my);
+        const float sx = ctx.world_w / static_cast<float>(win_w);
+        const float sy = ctx.world_h / static_cast<float>(win_h);
+        dx = mx * sx - player_->pos.x;
+        dy = my * sy - player_->pos.y;
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len < 0.001f) {
+            dx = 0.0f;
+            dy = -1.0f;
+        } else {
+            dx /= len;
+            dy /= len;
+        }
     }
-    auto proj = std::make_unique<Projectile>(
-        player_->pos.x, player_->pos.y, dx * kProjectileSpeed,
-        dy * kProjectileSpeed);
-    proj->set_texture(projectile_tex_.get());
-    entities_.push_back(std::move(proj));
+
+    // Emit N projectiles spread across the fire cone.
+    const int n = w.projectile_count;
+    const float spread_rad = w.spread_degrees * (static_cast<float>(M_PI) / 180.0f);
+    for (int i = 0; i < n; ++i) {
+        float angle = 0.0f;
+        if (n > 1) angle = -spread_rad * 0.5f + spread_rad * (i / (n - 1.0f));
+        const float ca = std::cos(angle);
+        const float sa = std::sin(angle);
+        const float dirx = dx * ca - dy * sa;
+        const float diry = dx * sa + dy * ca;
+        auto proj = std::make_unique<Projectile>(
+            player_->pos.x, player_->pos.y,
+            dirx * w.projectile_speed, diry * w.projectile_speed, w.damage);
+        proj->set_texture(projectile_tex_.get());
+        entities_.push_back(std::move(proj));
+    }
 }
 
 void Game::check_collisions() {
     // Projectile vs enemy: the projectile is destroyed and the enemy takes
-    // a hit (dies in one shot for now).
+    // hit damage from the weapon. Dead enemies may drop an item.
     for (auto& a : entities_) {
         auto* proj = dynamic_cast<Projectile*>(a.get());
         if (!proj || !proj->alive) continue;
@@ -216,7 +455,12 @@ void Game::check_collisions() {
             if (!en || !en->alive) continue;
             if (entities_overlap(*proj, *en)) {
                 proj->alive = false;
-                en->damage(1);
+                const Vec2 drop_pos = en->pos;
+                en->damage(proj->damage_amount);
+                if (!en->alive) {
+                    ++score_;  // count the kill
+                    maybe_drop_item(drop_pos);
+                }
                 break;
             }
         }
@@ -237,18 +481,119 @@ void Game::check_collisions() {
     }
 }
 
+void Game::check_item_pickups() {
+    if (!player_->alive) return;
+    for (auto& e : entities_) {
+        auto* item = dynamic_cast<Item*>(e.get());
+        if (!item || !item->alive) continue;
+        if (entities_overlap(*item, *player_)) {
+            item->on_pickup(*this, *player_);
+            item->alive = false;
+            ++pickups_collected_;
+        }
+    }
+}
+
+void Game::maybe_drop_item(Vec2 pos) {
+    const int r = std::rand() % 100;
+    if (r < 15) {
+        auto it = std::make_unique<HealthPickup>(pos.x, pos.y);
+        it->set_texture(health_tex_.get());
+        entities_.push_back(std::move(it));
+    } else if (r < 25) {
+        // Only drop real upgrades, never the default pistol.
+        const WeaponKind kinds[2] = {WeaponKind::Shotgun,
+                                    WeaponKind::MachineGun};
+        const WeaponKind k = kinds[std::rand() % 2];
+        const int ammo = weapon_spec(k).ammo;
+        auto it = std::make_unique<WeaponPickup>(pos.x, pos.y, k, ammo);
+        it->set_texture(weapon_pickup_tex(k));
+        entities_.push_back(std::move(it));
+    }
+}
+
+void Game::spawn_floor_item(const GameContext& ctx) {
+    int count = 0;
+    for (const auto& e : entities_)
+        if (dynamic_cast<Item*>(e.get())) ++count;
+    if (count >= kMaxFloorItems) return;
+
+    const float x = 60.0f + static_cast<float>(
+                               std::rand() % static_cast<int>(ctx.world_w - 120));
+    const float y = 60.0f + static_cast<float>(
+                               std::rand() % static_cast<int>(ctx.world_h - 120));
+    if (std::rand() % 2 == 0) {
+        auto it = std::make_unique<HealthPickup>(x, y);
+        it->set_texture(health_tex_.get());
+        entities_.push_back(std::move(it));
+    } else {
+        const WeaponKind kinds[2] = {WeaponKind::Shotgun,
+                                      WeaponKind::MachineGun};
+        const WeaponKind k = kinds[std::rand() % 2];
+        const int ammo = weapon_spec(k).ammo;
+        auto it = std::make_unique<WeaponPickup>(x, y, k, ammo);
+        it->set_texture(weapon_pickup_tex(k));
+        entities_.push_back(std::move(it));
+    }
+}
+
+void Game::spawn_item_on_player() {
+    // Alternate health and weapon pickups directly on the player.
+    if (smoke_frame_ % 180 == 0) {
+        auto it = std::make_unique<HealthPickup>(player_->pos.x, player_->pos.y);
+        it->set_texture(health_tex_.get());
+        entities_.push_back(std::move(it));
+    } else {
+        const WeaponKind kinds[2] = {WeaponKind::Shotgun,
+                                    WeaponKind::MachineGun};
+        const WeaponKind k = kinds[std::rand() % 2];
+        const int ammo = weapon_spec(k).ammo;
+        auto it =
+            std::make_unique<WeaponPickup>(player_->pos.x, player_->pos.y,
+                                           k, ammo);
+        it->set_texture(weapon_pickup_tex(k));
+        entities_.push_back(std::move(it));
+    }
+}
+
+Texture* Game::weapon_pickup_tex(WeaponKind k) {
+    switch (k) {
+        case WeaponKind::Shotgun: return weapon_tex_shotgun_.get();
+        case WeaponKind::MachineGun: return weapon_tex_machinegun_.get();
+        case WeaponKind::Pistol:
+        default: return weapon_tex_pistol_.get();
+    }
+}
+
 void Game::render() {
+    int win_w = kWindowWidth;
+    int win_h = kWindowHeight;
+    SDL_GetWindowSize(window_, &win_w, &win_h);
+    const float ww = static_cast<float>(win_w);
+    const float wh = static_cast<float>(win_h);
+
     SDL_SetRenderDrawColor(renderer_, 18, 18, 24, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(renderer_);
 
-    // Flash the player red while invulnerable (just took a hit).
+    if (state_ == GameState::MainMenu) {
+        menu_.render(font_, "BOXDEAD", ww, wh);
+        SDL_RenderPresent(renderer_);
+        return;
+    }
+    if (state_ == GameState::Options) {
+        menu_.render(font_, "OPTIONS", ww, wh);
+        SDL_RenderPresent(renderer_);
+        return;
+    }
+
+    // Playing / GameOver: world + HUD.
     const bool flashing = invuln_timer_ > 0.0f &&
                           static_cast<int>(invuln_timer_ * 10.0f) % 2 == 0;
     if (flashing) player_->set_color_override(SDL_Color{220, 60, 60, 255});
 
     for (const auto& e : entities_) e->render(renderer_);
 
-    if (flashing) player_->set_color_override(SDL_Color{60, 160, 255, 255});
+    if (flashing) player_->set_color_override(SDL_Color{255, 255, 255, 255});
 
     render_hud();
 
@@ -258,12 +603,13 @@ void Game::render() {
 void Game::render_hud() {
     // Health bar at the top-left.
     constexpr float bar_x = 16.0f;
-    constexpr float bar_y = 16.0f;
+    constexpr float bar_y = 44.0f;
     constexpr float bar_w = 180.0f;
     constexpr float bar_h = 18.0f;
-    constexpr int max_hp = 5;
-    const int hp = std::clamp(player_->health, 0, max_hp);
-    const float fill_w = bar_w * (static_cast<float>(hp) / max_hp);
+    const int hp = std::clamp(player_->health, 0, kPlayerMaxHp);
+    const float fill_w = bar_w * (static_cast<float>(hp) / kPlayerMaxHp);
+
+    font_.draw("HP", bar_x, 16.0f);
 
     // Background.
     SDL_SetRenderDrawColor(renderer_, 60, 60, 70, SDL_ALPHA_OPAQUE);
@@ -278,11 +624,59 @@ void Game::render_hud() {
     SDL_FRect border{bar_x, bar_y, bar_w, bar_h};
     SDL_RenderRect(renderer_, &border);
 
-    if (game_over_) {
-        SDL_SetRenderDrawColor(renderer_, 255, 255, 255, SDL_ALPHA_OPAQUE);
-        const SDL_FRect panel{0.0f, 0.0f, 1280.0f, 720.0f};
-        SDL_RenderRect(renderer_, &panel);  // placeholder; text needs SDL_ttf
+    // Score, wave, and current weapon, top-right.
+    font_.draw("Kills: " + std::to_string(score_), 980.0f, 16.0f);
+    font_.draw("Wave: " + std::to_string(wave_), 980.0f, 40.0f);
+    std::string wlabel = std::string("Weapon: ") + player_->weapon_name();
+    if (player_->weapon_ammo() >= 0)
+        wlabel += " x" + std::to_string(player_->weapon_ammo());
+    font_.draw(wlabel, 980.0f, 64.0f);
+
+    // Pickup toast, centered near the top.
+    if (pickup_toast_timer_ > 0.0f && !pickup_toast_.empty()) {
+        const int tw = font_.text_width(pickup_toast_);
+        font_.draw(pickup_toast_, (1280 - tw) * 0.5f, 110.0f,
+                   SDL_Color{255, 230, 120, 255});
     }
+
+    if (game_over_) {
+        // Dim the screen.
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 160);
+        const SDL_FRect dim{0.0f, 0.0f, 1280.0f, 720.0f};
+        SDL_RenderFillRect(renderer_, &dim);
+        // GAME OVER + score + restart prompt, centered.
+        font_.draw("GAME OVER", 560.0f, 320.0f,
+                   SDL_Color{220, 45, 45, 255});
+        font_.draw("Kills: " + std::to_string(score_), 568.0f, 360.0f);
+        font_.draw("Press R to restart, Esc for menu", 500.0f, 400.0f);
+    }
+}
+
+void Game::show_toast(const std::string& text) {
+    pickup_toast_ = text;
+    pickup_toast_timer_ = 1.2f;
+}
+
+void Game::reset() {
+    entities_.clear();
+    spawn_timer_ = 0.0f;
+    fire_cooldown_ = 0.0f;
+    invuln_timer_ = 0.0f;
+    game_over_ = false;
+    score_ = 0;
+    wave_ = 1;
+    wave_timer_ = 0.0f;
+    item_spawn_timer_ = 0.0f;
+    pickups_collected_ = 0;
+    pickup_toast_timer_ = 0.0f;
+    pickup_toast_.clear();
+    state_ = GameState::Playing;
+
+    auto player =
+        std::make_unique<Player>(kWindowWidth * 0.5f, kWindowHeight * 0.5f);
+    player->set_texture(player_tex_.get());
+    player_ = player.get();
+    entities_.push_back(std::move(player));
 }
 
 void Game::shutdown() {
@@ -295,6 +689,7 @@ void Game::shutdown() {
         SDL_DestroyWindow(window_);
         window_ = nullptr;
     }
+    TTF_Quit();
 }
 
 }  // namespace bd

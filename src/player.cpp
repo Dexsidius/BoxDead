@@ -11,7 +11,35 @@ namespace bd {
 Player::Player(float x, float y)
     : Entity(x, y, 32.0f, 32.0f), speed_(320.0f) {
     health = 5;  // player survives 5 enemy hits
-    sprite_.color = SDL_Color{60, 160, 255, 255};
+    sprite_.color = SDL_Color{255, 255, 255, 255};  // no tint by default
+}
+
+void Player::equip_weapon(WeaponKind kind, int ammo) {
+    weapon_kind_ = kind;
+    weapon_ammo_ = ammo;
+}
+
+WeaponSpec Player::current_weapon() const {
+    return weapon_spec(weapon_kind_);
+}
+
+bool Player::consume_ammo() {
+    if (weapon_ammo_ < 0) return true;  // infinite ammo
+    if (weapon_ammo_ == 0) {
+        weapon_kind_ = WeaponKind::Pistol;
+        weapon_ammo_ = -1;
+        return true;
+    }
+    --weapon_ammo_;
+    if (weapon_ammo_ == 0) {
+        weapon_kind_ = WeaponKind::Pistol;
+        weapon_ammo_ = -1;
+    }
+    return true;
+}
+
+std::string Player::weapon_name() const {
+    return weapon_spec(weapon_kind_).name;
 }
 
 void Player::update(float dt, const GameContext& ctx) {

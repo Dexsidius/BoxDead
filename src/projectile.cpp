@@ -3,11 +3,11 @@
 
 namespace bd {
 
-Projectile::Projectile(float x, float y, float vx, float vy)
-    : Entity(x, y, 6.0f, 6.0f), life_(2.5f) {
+Projectile::Projectile(float x, float y, float vx, float vy, int dmg)
+    : Entity(x, y, 6.0f, 6.0f), damage_amount(dmg), life_(2.5f) {
     vel.x = vx;
     vel.y = vy;
-    sprite_.color = SDL_Color{255, 220, 60, 255};
+    sprite_.color = SDL_Color{255, 255, 255, 255};
 }
 
 void Projectile::update(float dt, const GameContext& ctx) {

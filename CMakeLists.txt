@@ -23,6 +23,8 @@ else()
     find_package(SDL3 CONFIG REQUIRED)
 endif()
 
+find_package(SDL3_ttf CONFIG REQUIRED)
+
 add_executable(BoxDead
     src/main.cpp
     src/game.cpp
@@ -32,10 +34,14 @@ add_executable(BoxDead
     src/projectile.cpp
     src/texture.cpp
     src/sprite.cpp
+    src/font.cpp
+    src/menu.cpp
+    src/weapon.cpp
+    src/item.cpp
 )
 
 target_include_directories(BoxDead PRIVATE include)
-target_link_libraries(BoxDead PRIVATE SDL3::SDL3)
+target_link_libraries(BoxDead PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf-shared)
 
 if(MSVC)
     target_compile_options(BoxDead PRIVATE /W4)

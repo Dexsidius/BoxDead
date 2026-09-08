@@ -6,13 +6,13 @@ A re-edition of Boxhead built in C++ with SDL3.
 
 - CMake 3.24+
 - A C++20 compiler (MSVC, Clang, or GCC)
-- SDL3 (3.2.x)
+- SDL3 (3.2.x) and SDL3_ttf (3.2.x)
 
 ### Installing SDL3
 
-- **macOS (Homebrew):** `brew install sdl3`
-- **Debian/Ubuntu:** `apt install libsdl3-dev`
-- **Arch:** `pacman -S sdl3`
+- **macOS (Homebrew):** `brew install sdl3 sdl3-ttf`
+- **Debian/Ubuntu:** `apt install libsdl3-dev libsdl3-ttf-dev`
+- **Arch:** `pacman -S sdl3 sdl3_ttf`
 - **Windows (vcpkg):** `vcpkg install sdl3`
 - **No package manager?** Build with `-DBOXDEAD_FETCH_SDL3=ON` and CMake
   fetches SDL3 from source automatically (no preinstall needed).
@@ -38,12 +38,38 @@ cmake --build build
 .\build\BoxDead.exe    # Windows
 ```
 
-A 1280x720 window opens with a dark background, a blue player, red
-enemies that spawn at the screen edges and chase the player, and yellow
-projectiles. Move with WASD/arrows, aim with the mouse, and fire with
-Space or left-click to destroy enemies. Enemies deal contact damage; the
-player has 5 HP shown in a health bar. When health hits zero, the game ends.
-Press **Esc** or close the window to quit.
+A 1280x720 window opens to a **main menu** (New Game / Options / Exit).
+Choose New Game to start: a blue player, red enemies that spawn at the screen
+edges and chase the player, and yellow projectiles. Move with WASD/arrows, aim
+with the mouse, and fire with Space or left-click to destroy enemies. Enemies
+deal contact damage; the player has 5 HP shown in a health bar. Pick up items
+(weapons and consumables) by walking over them. When health hits zero, the
+game ends with a GAME OVER screen — press R to restart or Esc for the menu.
+
+## Items, weapons, and consumables
+
+Items are static pickups collected on contact. The `Item` base exposes a
+single `on_pickup(Game&, Player&)` hook; concrete items live the side effects
+there, not in `Game`.
+
+- **Health pickup** (green cross) — restores 2 HP, capped at 5.
+- **Weapon pickup** (colored box per weapon) — equips a new weapon with finite
+  ammo. When ammo runs out, the player reverts to the infinite pistol.
+
+Weapons are value types, not polymorphic: a `WeaponSpec` (cooldown, projectile
+count, spread cone, speed, damage, ammo) is looked up from a `WeaponKind`.
+`Game::fire_projectile()` asks the player for the current spec and emits the
+spread of projectiles in one path, so adding a weapon is just a new enum entry
+plus a spec.
+
+- **Pistol** — infinite ammo, 1 projectile, fast cooldown.
+- **Shotgun** — 6 rounds, 5-projectile spread.
+- **Machine Gun** — 30 rounds, rapid single shots.
+
+Items drop from killed enemies (≈25% chance) and also spawn on the floor
+every few seconds (up to 3 at once). A toast message flashes near the top when
+you pick something up, and the HUD shows the current weapon and remaining
+ammo.
 
 ## Project structure
 
@@ -51,17 +77,24 @@ Press **Esc** or close the window to quit.
 include/boxdead/        - public headers (one responsibility each)
   math.hpp              - Vec2
   texture.hpp           - Texture (RAII SDL_Texture)
-  sprite.hpp             - Sprite + draw_sprite + procedural art
+  sprite.hpp            - Sprite + draw_sprite + procedural art
   entity.hpp            - Entity base + GameContext + overlap test
-  player.hpp            - Player (keyboard movement, health, i-frame flash)
+  player.hpp            - Player (movement, health, i-frame flash, weapons)
   enemy.hpp             - Enemy (chase AI)
-  projectile.hpp        - Projectile (player-fired bullet)
-  game.hpp              - Game class (owns loop, entities, systems)
+  projectile.hpp        - Projectile (bullet + hit damage)
+  weapon.hpp            - WeaponKind + WeaponSpec profiles
+  item.hpp              - Item base + HealthPickup + WeaponPickup
+  font.hpp              - Font (RAII TTF_Font + cached text textures)
+  menu.hpp              - Menu (navigable text menu)
+  game.hpp              - Game class (state machine + loop + systems)
 src/                    - implementations
   main.cpp              - entry point (thin bootstrap)
-  game.cpp              - loop, spawning, firing, collisions, rendering
+  game.cpp              - state machine, loop, spawning, firing, collisions,
+                          item pickups, rendering, HUD
   player.cpp / enemy.cpp / projectile.cpp
+  weapon.cpp / item.cpp / menu.cpp / font.cpp
   texture.cpp / sprite.cpp / entity.cpp
+assets/dejavu-sans.ttf   - bundled TrueType font for text rendering
 ```
 
 The sprite layer draws textured quads when a texture is set, and falls back
@@ -74,13 +107,16 @@ to use real BMP assets (add SDL_image for PNG/JPG).
 - **WASD** or **Arrow keys** - move the player
 - **Mouse** - aim
 - **Space** or **Left mouse** - fire
-- **Esc** or close the window - quit
+- **Up/Down** (or W/S) + **Enter** - navigate menus; mouse hover/click works too
+- **Esc** - back / quit (context-dependent)
+- **R** - restart after GAME OVER
 
-Projectiles fire toward the mouse cursor with a short cooldown. A projectile
-that hits an enemy destroys both. Enemies spawn at the edges and chase the
-player; touching the player deals 1 damage with a 1.2-second invulnerability
-window (the player flashes red). The player starts with 5 HP shown in a
-health bar; reaching 0 ends the game.
+Projectiles fire toward the mouse cursor using the player's current weapon
+profile (cooldown, projectile count, and spread cone). A projectile that hits
+an enemy applies the weapon's damage and may drop an item. Enemies spawn at
+the edges and chase the player; touching the player deals 1 damage with a
+1.2-second invulnerability window (the player flashes red). The player starts
+with 5 HP shown in a health bar; reaching 0 ends the game.
 
 Movement is frame-rate-independent: the player moves at a fixed speed in
 pixels per second regardless of FPS, so it feels the same on 60 Hz and
@@ -90,7 +126,15 @@ cardinal movement.
 ## Smoke test (no display required)
 
 ```bash
-./build/BoxDead --smoke-test
+SDL_VIDEO_DRIVER=dummy ./build/BoxDead --smoke-test
 ```
 
-Runs a single frame and exits — useful for CI or headless environments.
+Runs a ~15-second headless scenario (auto-firing at enemies, forcing item
+spawns on the player) and prints a summary line — useful for CI or headless
+environments. There is also a pure weapon-logic unit test:
+
+```bash
+g++ -std=c++20 -I include test_weapon.cpp src/player.cpp src/weapon.cpp \
+    src/entity.cpp src/sprite.cpp src/texture.cpp -lSDL3 -o test_weapon
+./test_weapon
+```

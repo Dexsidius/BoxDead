@@ -7,7 +7,7 @@ namespace bd {
 
 Enemy::Enemy(float x, float y)
     : Entity(x, y, 28.0f, 28.0f), speed_(120.0f) {
-    sprite_.color = SDL_Color{220, 45, 45, 255};
+    sprite_.color = SDL_Color{255, 255, 255, 255};  // no tint (texture is red)
 }
 
 void Enemy::update(float dt, const GameContext& ctx) {

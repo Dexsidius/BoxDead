@@ -1,18 +1,25 @@
-// BoxDead - Game: owns the window, renderer, entities, and main loop
 #pragma once
 
 #include "boxdead/entity.hpp"
 #include "boxdead/enemy.hpp"
+#include "boxdead/font.hpp"
+#include "boxdead/menu.hpp"
 #include "boxdead/player.hpp"
 #include "boxdead/projectile.hpp"
 #include "boxdead/texture.hpp"
+#include "boxdead/weapon.hpp"
 
 #include <SDL3/SDL.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace bd {
+
+// High-level game state. The run loop dispatches input/update/render based
+// on the current state, so the menu, options, and gameplay never overlap.
+enum class GameState { MainMenu, Options, Playing, GameOver };
 
 class Game {
 public:
@@ -22,35 +29,75 @@ public:
     Game(const Game&) = delete;
     Game& operator=(const Game&) = delete;
 
-    // Create window, renderer, sprite textures, and the player.
     bool init();
-
-    // Run the main loop until the window closes or Esc is pressed.
     void run();
-
-    // Release window/renderer resources.
     void shutdown();
 
+    // Called by Item::on_pickup implementations to show a toast message.
+    void show_toast(const std::string& text);
+
 private:
-    void handle_events(bool& running);
+    // Loop phases (dispatched by `state_`).
+    void process_input(bool& running);
     void update(float dt);
     void render();
     void render_hud();
+
+    // Gameplay systems.
     void spawn_enemy(const GameContext& ctx);
     void fire_projectile(float dt, const GameContext& ctx);
     void check_collisions();
+    void check_item_pickups();
+    void maybe_drop_item(Vec2 pos);
+    void spawn_floor_item(const GameContext& ctx);
+    void spawn_item_on_player();
+    void reset();
 
-    // Per-frame invulnerability window after the player takes a hit.
+    // Menu / state transitions.
+    void on_main_menu_select(int index, bool& running);
+    void on_options_select(int index);
+    void enter_options();
+    void return_to_menu();
+    std::string difficulty_label();
+    float difficulty_factor();
+
+    // Picks the pickup texture for a given weapon kind.
+    Texture* weapon_pickup_tex(WeaponKind k);
+
+    // Combat / i-frame state.
     float invuln_timer_ = 0.0f;
     bool game_over_ = false;
+
+    // Score + progression.
+    int score_ = 0;
+    int wave_ = 1;
+    float wave_timer_ = 0.0f;
+    float wave_duration_ = 15.0f;
+    int difficulty_ = 1;  // 0 Easy, 1 Normal, 2 Hard
+
+    // Item spawn + pickup feedback.
+    float item_spawn_timer_ = 0.0f;
+    int pickups_collected_ = 0;
+    int smoke_frame_ = 0;
+    std::string pickup_toast_;
+    float pickup_toast_timer_ = 0.0f;
+
+    // Top-level state + UI.
+    GameState state_ = GameState::MainMenu;
+    Menu menu_;
+    Font font_;
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     std::unique_ptr<Texture> player_tex_;
     std::unique_ptr<Texture> enemy_tex_;
     std::unique_ptr<Texture> projectile_tex_;
+    std::unique_ptr<Texture> health_tex_;
+    std::unique_ptr<Texture> weapon_tex_pistol_;
+    std::unique_ptr<Texture> weapon_tex_shotgun_;
+    std::unique_ptr<Texture> weapon_tex_machinegun_;
     std::vector<std::unique_ptr<Entity>> entities_;
-    Player* player_ = nullptr;  // non-owning; lives in entities_
+    Player* player_ = nullptr;
     float spawn_timer_ = 0.0f;
     float fire_cooldown_ = 0.0f;
     bool smoke_test_;
