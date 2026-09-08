@@ -18,16 +18,23 @@ if(BOXDEAD_FETCH_SDL3)
         GIT_TAG release-3.4.16
         GIT_SHALLOW TRUE
     )
-    # SDL3's CMake config exports the SDL3::SDL3 and SDL3::Headers targets.
     FetchContent_MakeAvailable(SDL3)
 else()
     find_package(SDL3 CONFIG REQUIRED)
 endif()
 
-add_executable(BoxDead src/main.cpp)
+add_executable(BoxDead
+    src/main.cpp
+    src/game.cpp
+    src/entity.cpp
+    src/player.cpp
+    src/enemy.cpp
+    src/projectile.cpp
+    src/texture.cpp
+    src/sprite.cpp
+)
 
-# SDL3::SDL3 already links the main library (incl. SDL3_main behavior on platforms
-# that need it). Use SDL3::Headers if you prefer a headers-only dependency.
+target_include_directories(BoxDead PRIVATE include)
 target_link_libraries(BoxDead PRIVATE SDL3::SDL3)
 
 if(MSVC)

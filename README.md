@@ -47,10 +47,20 @@ to quit.
 ## Project structure
 
 ```
-src/
-  sprite.hpp   - Texture (RAII SDL_Texture) + Sprite + draw_sprite()
-  entity.hpp   - Entity base + Player, Enemy (chase AI), Projectile
-  main.cpp     - game loop, spawning, firing, collisions, rendering
+include/boxdead/        - public headers (one responsibility each)
+  math.hpp              - Vec2
+  texture.hpp           - Texture (RAII SDL_Texture)
+  sprite.hpp             - Sprite + draw_sprite + procedural art
+  entity.hpp            - Entity base + GameContext + overlap test
+  player.hpp            - Player (keyboard movement)
+  enemy.hpp             - Enemy (chase AI)
+  projectile.hpp        - Projectile (player-fired bullet)
+  game.hpp              - Game class (owns loop, entities, systems)
+src/                    - implementations
+  main.cpp              - entry point (thin bootstrap)
+  game.cpp              - loop, spawning, firing, collisions, rendering
+  player.cpp / enemy.cpp / projectile.cpp
+  texture.cpp / sprite.cpp / entity.cpp
 ```
 
 The sprite layer draws textured quads when a texture is set, and falls back
