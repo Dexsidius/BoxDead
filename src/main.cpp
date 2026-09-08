@@ -21,6 +21,8 @@ constexpr char kWindowTitle[] = "BoxDead";
 
 constexpr float kSpawnInterval = 1.2f;   // seconds between enemy spawns
 constexpr size_t kMaxEnemies = 50;
+constexpr float kFireInterval = 0.18f;  // seconds between shots
+constexpr float kProjectileSpeed = 600.0f;
 
 struct SdlInitGuard {
     ~SdlInitGuard() { SDL_Quit(); }
@@ -94,6 +96,8 @@ int main(int argc, char* argv[]) {
         renderer.get(), SDL_Color{60, 160, 255, 255}, 32);
     auto enemy_tex = make_solid_sprite_texture(
         renderer.get(), SDL_Color{220, 45, 45, 255}, 32);
+    auto projectile_tex = make_solid_sprite_texture(
+        renderer.get(), SDL_Color{255, 220, 60, 255}, 8);
 
     std::srand(static_cast<unsigned>(std::time(nullptr)));
 
@@ -110,6 +114,7 @@ int main(int argc, char* argv[]) {
     SDL_GetCurrentRenderOutputSize(renderer.get(), &draw_w, &draw_h);
 
     float spawn_timer = 0.0f;
+    float fire_cooldown = 0.0f;
     Uint64 last_time = SDL_GetTicksNS();
     bool running = true;
 
@@ -157,12 +162,62 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // Fire a projectile toward the mouse when the fire button is held
+        // and the cooldown has elapsed. Fire with Space or left mouse.
+        fire_cooldown -= dt;
+        const bool want_fire =
+            (ctx.keys && ctx.keys[SDL_SCANCODE_SPACE]) ||
+            (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK);
+        if (want_fire && fire_cooldown <= 0.0f) {
+            fire_cooldown = kFireInterval;
+            int win_w = kWindowWidth;
+            int win_h = kWindowHeight;
+            SDL_GetWindowSize(window.get(), &win_w, &win_h);
+            float mx = 0.0f;
+            float my = 0.0f;
+            SDL_GetMouseState(&mx, &my);
+            // Scale mouse coords from window space to render output space
+            // (handles HiDPI where drawable size != window size).
+            const float sx = ctx.world_w / static_cast<float>(win_w);
+            const float sy = ctx.world_h / static_cast<float>(win_h);
+            float dx = mx * sx - player_ptr->pos.x;
+            float dy = my * sy - player_ptr->pos.y;
+            const float len = std::sqrt(dx * dx + dy * dy);
+            if (len < 0.001f) {
+                dx = 0.0f;
+                dy = -1.0f;
+            } else {
+                dx /= len;
+                dy /= len;
+            }
+            auto proj = std::make_unique<Projectile>(
+                player_ptr->pos.x, player_ptr->pos.y,
+                dx * kProjectileSpeed, dy * kProjectileSpeed);
+            proj->set_texture(projectile_tex.get());
+            entities.push_back(std::move(proj));
+        }
+
         // Update everything except the player (already updated).
         for (auto& e : entities) {
             if (e.get() != player_ptr) e->update(dt, ctx);
         }
 
-        // Remove dead entities (currently none die; hook for combat later).
+        // Collisions: projectiles hit enemies, killing both.
+        for (auto& a : entities) {
+            auto* proj = dynamic_cast<Projectile*>(a.get());
+            if (!proj || !proj->alive) continue;
+            for (auto& b : entities) {
+                auto* en = dynamic_cast<Enemy*>(b.get());
+                if (!en || !en->alive) continue;
+                if (entities_overlap(*proj, *en)) {
+                    proj->alive = false;
+                    en->alive = false;
+                    break;
+                }
+            }
+        }
+
+        // Remove dead entities (projectiles that hit/expired and dead enemies).
         entities.erase(
             std::remove_if(entities.begin(), entities.end(),
                            [](const std::unique_ptr<Entity>& e) {

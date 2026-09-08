@@ -38,17 +38,19 @@ cmake --build build
 .\build\BoxDead.exe    # Windows
 ```
 
-A 1280x720 window opens with a dark background, a blue player square, and
-red enemies that spawn at the screen edges and chase the player. Move with
-WASD/arrows; press **Esc** or close the window to quit.
+A 1280x720 window opens with a dark background, a blue player, red
+enemies that spawn at the screen edges and chase the player, and yellow
+projectiles. Move with WASD/arrows, aim with the mouse, and fire with
+Space or left-click to destroy enemies. Press **Esc** or close the window
+to quit.
 
 ## Project structure
 
 ```
 src/
   sprite.hpp   - Texture (RAII SDL_Texture) + Sprite + draw_sprite()
-  entity.hpp   - Entity base + Player (keyboard) + Enemy (chase AI)
-  main.cpp     - game loop, spawning, rendering
+  entity.hpp   - Entity base + Player, Enemy (chase AI), Projectile
+  main.cpp     - game loop, spawning, firing, collisions, rendering
 ```
 
 The sprite layer draws textured quads when a texture is set, and falls back
@@ -59,7 +61,13 @@ to use real BMP assets (add SDL_image for PNG/JPG).
 ## Controls
 
 - **WASD** or **Arrow keys** - move the player
+- **Mouse** - aim
+- **Space** or **Left mouse** - fire
 - **Esc** or close the window - quit
+
+Projectiles fire toward the mouse cursor with a short cooldown. A projectile
+that hits an enemy destroys both. Enemies spawn at the edges and chase the
+player.
 
 Movement is frame-rate-independent: the player moves at a fixed speed in
 pixels per second regardless of FPS, so it feels the same on 60 Hz and
