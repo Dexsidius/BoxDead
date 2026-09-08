@@ -141,12 +141,32 @@ stay simple and skip animation overhead.
 
 - **Player** switches between `walk` (4 frames) while moving and `idle`
   (2 frames, body bob) when standing still.
-- **Enemies** run a `walk` cycle continuously while chasing.
+- **Enemies** run a `walk` cycle (4 frames) continuously while chasing.
 
 The walk/idle sprite sheets are generated procedurally (`make_walk_sheet_texture`)
 so the boxman has a body, a border, and two legs whose heights alternate per
 frame to read as a walk cycle. Swap them for real sprite sheets later by loading
 a horizontal strip and slicing it with `make_animation()`.
+
+## Enemies
+
+There are two enemy types, both Boxhead-style creatures drawn procedurally with
+`make_creature_sheet_texture` (a boxy head with a hair band or horns, a torso
+with a tie and blood, and two legs running a 4-phase walk):
+
+- **Zombie** — the general enemy. Pale green skin, dark hair, white shirt with a
+  red tie and blood splatter. 1 HP, speed 120 px/s. Spawns every wave.
+- **Red Devil** — the special enemy. Red skin, dark red body, two horns.
+  Inherits the zombie's behavior (same speed and chase AI) but is tougher at
+  2 HP. Starts appearing from wave 2 onward (25% chance per spawn).
+
+## Windows build
+
+A prebuilt Windows x64 build is included in `dist/` of this repo:
+`dist/BoxDead-v0.1.0-windows-x64.zip`. Unzip it and double-click
+`BoxDead.exe`; keep `SDL3.dll`, `SDL3_ttf.dll`, and the `assets/` folder next
+to the exe. It is cross-compiled from Linux with MinGW-w64 against SDL3 3.4.16
+and SDL3_ttf 3.2.2 and bundles the runtime DLLs and font.
 
 ## Smoke test (no display required)
 

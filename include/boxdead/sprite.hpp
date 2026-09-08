@@ -44,4 +44,25 @@ std::unique_ptr<Texture> make_walk_sheet_texture(SDL_Renderer* r,
                                                  int frame_size,
                                                  bool moving);
 
+// Palette for a Boxhead-style creature sprite (zombie or devil).
+struct CreaturePalette {
+    SDL_Color skin{0, 0, 0, 0};    // face / exposed skin
+    SDL_Color hair{0, 0, 0, 0};     // alpha 0 = no hair band
+    SDL_Color torso{0, 0, 0, 0};    // shirt / body
+    SDL_Color tie{0, 0, 0, 0};      // alpha 0 = no tie stripe
+    SDL_Color pants{0, 0, 0, 0};    // legs
+    SDL_Color horn{0, 0, 0, 0};     // alpha 0 = no horns
+    bool blood = false;             // blood splatter on the torso
+};
+
+// Procedurally generate a horizontal sprite sheet of `frame_count` walk/idle
+// frames for a Boxhead-style creature: a boxy head (hair band + face), optional
+// stepped horns, a torso with an optional center tie and blood splatter, and two
+// legs that alternate height when moving. Used for the zombie and devil enemies.
+std::unique_ptr<Texture> make_creature_sheet_texture(SDL_Renderer* r,
+                                                   const CreaturePalette& pal,
+                                                   int frame_count,
+                                                   int frame_size,
+                                                   bool moving);
+
 }  // namespace bd

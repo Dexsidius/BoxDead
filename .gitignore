@@ -28,3 +28,7 @@ compile_commands.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Windows release bundle: only the zip is tracked (LFS)
+/dist/*
+!/dist/*.zip

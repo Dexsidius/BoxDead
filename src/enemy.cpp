@@ -5,9 +5,12 @@
 
 namespace bd {
 
-Enemy::Enemy(float x, float y)
-    : AnimatedEntity(x, y, 28.0f, 28.0f), speed_(120.0f) {
-    sprite_.color = SDL_Color{255, 255, 255, 255};  // no tint (texture is red)
+Enemy::Enemy(EnemyKind kind, float x, float y)
+    : AnimatedEntity(x, y, 36.0f, 36.0f), kind_(kind), speed_(120.0f) {
+    // The Devil inherits the zombie's behavior but is a tougher "special"
+    // enemy (2 HP instead of 1). Same speed and chase AI.
+    health = (kind_ == EnemyKind::Devil) ? 2 : 1;
+    sprite_.color = SDL_Color{255, 255, 255, 255};  // no tint (texture carries color)
 }
 
 void Enemy::update(float dt, const GameContext& ctx) {

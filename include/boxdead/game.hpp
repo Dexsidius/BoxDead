@@ -92,7 +92,8 @@ private:
     SDL_Renderer* renderer_ = nullptr;
     std::unique_ptr<Texture> player_walk_sheet_;
     std::unique_ptr<Texture> player_idle_sheet_;
-    std::unique_ptr<Texture> enemy_walk_sheet_;
+    std::unique_ptr<Texture> zombie_walk_sheet_;
+    std::unique_ptr<Texture> devil_walk_sheet_;
     std::unique_ptr<Texture> projectile_tex_;
     std::unique_ptr<Texture> health_tex_;
     std::unique_ptr<Texture> weapon_tex_pistol_;

@@ -1,5 +1,6 @@
 // BoxDead - Game implementation: owns the main loop, menu, spawning, firing,
 // collisions, item pickups, and rendering. main.cpp is a thin bootstrap.
+#define _USE_MATH_DEFINES
 #include "boxdead/game.hpp"
 
 #include "boxdead/item.hpp"
@@ -54,8 +55,29 @@ bool Game::init() {
         renderer_, SDL_Color{60, 160, 255, 255}, 4, 32, true);
     player_idle_sheet_ = make_walk_sheet_texture(
         renderer_, SDL_Color{60, 160, 255, 255}, 2, 32, false);
-    enemy_walk_sheet_ = make_walk_sheet_texture(
-        renderer_, SDL_Color{220, 45, 45, 255}, 4, 32, true);
+
+    // Boxhead-style zombie: pale green skin, dark hair, white shirt with a
+    // red tie, blood splatter.
+    CreaturePalette zombie_pal;
+    zombie_pal.skin = SDL_Color{158, 194, 90, 255};
+    zombie_pal.hair = SDL_Color{51, 51, 51, 255};
+    zombie_pal.torso = SDL_Color{232, 232, 232, 255};
+    zombie_pal.tie = SDL_Color{198, 40, 40, 255};
+    zombie_pal.pants = SDL_Color{58, 58, 58, 255};
+    zombie_pal.blood = true;
+    zombie_walk_sheet_ = make_creature_sheet_texture(
+        renderer_, zombie_pal, 4, 40, true);
+
+    // Boxhead-style red devil: red skin, dark red torso, two horns. Inherits
+    // the zombie's behavior but is tougher (2 HP).
+    CreaturePalette devil_pal;
+    devil_pal.skin = SDL_Color{211, 47, 47, 255};
+    devil_pal.torso = SDL_Color{139, 26, 26, 255};
+    devil_pal.pants = SDL_Color{74, 16, 16, 255};
+    devil_pal.horn = SDL_Color{26, 16, 16, 255};
+    devil_walk_sheet_ = make_creature_sheet_texture(
+        renderer_, devil_pal, 4, 40, true);
+
     projectile_tex_ = make_solid_sprite_texture(
         renderer_, SDL_Color{255, 220, 60, 255}, 8);
     health_tex_ = make_cross_sprite_texture(
@@ -375,8 +397,15 @@ void Game::spawn_enemy(const GameContext& ctx) {
             y = static_cast<float>(std::rand() % static_cast<int>(ctx.world_h));
             break;
     }
-    auto e = std::make_unique<Enemy>(x, y);
-    e->add_animation("walk", enemy_walk_sheet_.get(), 4, 32, 0.14f, true);
+    // Pick the enemy kind: zombies always; the tougher red Devil appears
+    // from wave 2 onward (25% chance) as a special enemy.
+    const EnemyKind kind =
+        (wave_ >= 2 && (std::rand() % 4 == 0)) ? EnemyKind::Devil
+                                              : EnemyKind::Zombie;
+    auto e = std::make_unique<Enemy>(kind, x, y);
+    const Texture* sheet = (kind == EnemyKind::Devil) ? devil_walk_sheet_.get()
+                                                       : zombie_walk_sheet_.get();
+    e->add_animation("walk", const_cast<Texture*>(sheet), 4, 40, 0.14f, true);
     e->play_animation("walk");
     entities_.push_back(std::move(e));
 }
