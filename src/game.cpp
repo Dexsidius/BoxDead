@@ -22,6 +22,7 @@ constexpr float kSpawnInterval = 1.2f;    // seconds between enemy spawns
 constexpr size_t kMaxEnemies = 50;
 constexpr float kFireInterval = 0.18f;    // seconds between shots
 constexpr float kProjectileSpeed = 600.0f;
+constexpr float kInvulnDuration = 1.2f;  // seconds of i-frames after a hit
 }  // namespace
 
 Game::Game(bool smoke_test) : smoke_test_(smoke_test) {}
@@ -71,7 +72,7 @@ void Game::run() {
         update(dt);
         render();
 
-        if (smoke_test_) running = false;  // one frame, for CI
+        if (smoke_test_ || game_over_) running = false;  // one frame, for CI
         SDL_Delay(1);                       // yield CPU
     }
 }
@@ -106,6 +107,9 @@ void Game::update(float dt) {
     player_->update(dt, ctx);
     ctx.player_pos = player_->pos;
 
+    // When the player is dead, freeze the world (no spawns, movement, etc.).
+    if (game_over_) return;
+
     // Spawn enemies on a timer.
     spawn_timer_ += dt;
     if (spawn_timer_ >= kSpawnInterval) {
@@ -121,6 +125,12 @@ void Game::update(float dt) {
     // Update everything except the player (already updated).
     for (auto& e : entities_) {
         if (e.get() != player_) e->update(dt, ctx);
+    }
+
+    // Tick the player's post-hit invulnerability window.
+    if (invuln_timer_ > 0.0f) {
+        invuln_timer_ -= dt;
+        if (invuln_timer_ < 0.0f) invuln_timer_ = 0.0f;
     }
 
     check_collisions();
@@ -196,6 +206,8 @@ void Game::fire_projectile(float dt, const GameContext& ctx) {
 }
 
 void Game::check_collisions() {
+    // Projectile vs enemy: the projectile is destroyed and the enemy takes
+    // a hit (dies in one shot for now).
     for (auto& a : entities_) {
         auto* proj = dynamic_cast<Projectile*>(a.get());
         if (!proj || !proj->alive) continue;
@@ -204,7 +216,21 @@ void Game::check_collisions() {
             if (!en || !en->alive) continue;
             if (entities_overlap(*proj, *en)) {
                 proj->alive = false;
-                en->alive = false;
+                en->damage(1);
+                break;
+            }
+        }
+    }
+
+    // Enemy vs player: contact damage on a short cooldown.
+    if (invuln_timer_ <= 0.0f && player_->alive) {
+        for (auto& e : entities_) {
+            auto* en = dynamic_cast<Enemy*>(e.get());
+            if (!en || !en->alive) continue;
+            if (entities_overlap(*en, *player_)) {
+                player_->damage(1);
+                invuln_timer_ = kInvulnDuration;
+                if (!player_->alive) game_over_ = true;
                 break;
             }
         }
@@ -214,8 +240,49 @@ void Game::check_collisions() {
 void Game::render() {
     SDL_SetRenderDrawColor(renderer_, 18, 18, 24, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(renderer_);
+
+    // Flash the player red while invulnerable (just took a hit).
+    const bool flashing = invuln_timer_ > 0.0f &&
+                          static_cast<int>(invuln_timer_ * 10.0f) % 2 == 0;
+    if (flashing) player_->set_color_override(SDL_Color{220, 60, 60, 255});
+
     for (const auto& e : entities_) e->render(renderer_);
+
+    if (flashing) player_->set_color_override(SDL_Color{60, 160, 255, 255});
+
+    render_hud();
+
     SDL_RenderPresent(renderer_);
+}
+
+void Game::render_hud() {
+    // Health bar at the top-left.
+    constexpr float bar_x = 16.0f;
+    constexpr float bar_y = 16.0f;
+    constexpr float bar_w = 180.0f;
+    constexpr float bar_h = 18.0f;
+    constexpr int max_hp = 5;
+    const int hp = std::clamp(player_->health, 0, max_hp);
+    const float fill_w = bar_w * (static_cast<float>(hp) / max_hp);
+
+    // Background.
+    SDL_SetRenderDrawColor(renderer_, 60, 60, 70, SDL_ALPHA_OPAQUE);
+    SDL_FRect bg{bar_x, bar_y, bar_w, bar_h};
+    SDL_RenderFillRect(renderer_, &bg);
+    // Fill.
+    SDL_SetRenderDrawColor(renderer_, 220, 45, 45, SDL_ALPHA_OPAQUE);
+    SDL_FRect fill{bar_x, bar_y, fill_w, bar_h};
+    SDL_RenderFillRect(renderer_, &fill);
+    // Border.
+    SDL_SetRenderDrawColor(renderer_, 200, 200, 210, SDL_ALPHA_OPAQUE);
+    SDL_FRect border{bar_x, bar_y, bar_w, bar_h};
+    SDL_RenderRect(renderer_, &border);
+
+    if (game_over_) {
+        SDL_SetRenderDrawColor(renderer_, 255, 255, 255, SDL_ALPHA_OPAQUE);
+        const SDL_FRect panel{0.0f, 0.0f, 1280.0f, 720.0f};
+        SDL_RenderRect(renderer_, &panel);  // placeholder; text needs SDL_ttf
+    }
 }
 
 void Game::shutdown() {

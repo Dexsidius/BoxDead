@@ -10,6 +10,7 @@ namespace bd {
 
 Player::Player(float x, float y)
     : Entity(x, y, 32.0f, 32.0f), speed_(320.0f) {
+    health = 5;  // player survives 5 enemy hits
     sprite_.color = SDL_Color{60, 160, 255, 255};
 }
 

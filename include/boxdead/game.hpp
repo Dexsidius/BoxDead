@@ -35,9 +35,14 @@ private:
     void handle_events(bool& running);
     void update(float dt);
     void render();
+    void render_hud();
     void spawn_enemy(const GameContext& ctx);
     void fire_projectile(float dt, const GameContext& ctx);
     void check_collisions();
+
+    // Per-frame invulnerability window after the player takes a hit.
+    float invuln_timer_ = 0.0f;
+    bool game_over_ = false;
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;

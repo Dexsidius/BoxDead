@@ -41,8 +41,9 @@ cmake --build build
 A 1280x720 window opens with a dark background, a blue player, red
 enemies that spawn at the screen edges and chase the player, and yellow
 projectiles. Move with WASD/arrows, aim with the mouse, and fire with
-Space or left-click to destroy enemies. Press **Esc** or close the window
-to quit.
+Space or left-click to destroy enemies. Enemies deal contact damage; the
+player has 5 HP shown in a health bar. When health hits zero, the game ends.
+Press **Esc** or close the window to quit.
 
 ## Project structure
 
@@ -52,7 +53,7 @@ include/boxdead/        - public headers (one responsibility each)
   texture.hpp           - Texture (RAII SDL_Texture)
   sprite.hpp             - Sprite + draw_sprite + procedural art
   entity.hpp            - Entity base + GameContext + overlap test
-  player.hpp            - Player (keyboard movement)
+  player.hpp            - Player (keyboard movement, health, i-frame flash)
   enemy.hpp             - Enemy (chase AI)
   projectile.hpp        - Projectile (player-fired bullet)
   game.hpp              - Game class (owns loop, entities, systems)
@@ -77,7 +78,9 @@ to use real BMP assets (add SDL_image for PNG/JPG).
 
 Projectiles fire toward the mouse cursor with a short cooldown. A projectile
 that hits an enemy destroys both. Enemies spawn at the edges and chase the
-player.
+player; touching the player deals 1 damage with a 1.2-second invulnerability
+window (the player flashes red). The player starts with 5 HP shown in a
+health bar; reaching 0 ends the game.
 
 Movement is frame-rate-independent: the player moves at a fixed speed in
 pixels per second regardless of FPS, so it feels the same on 60 Hz and

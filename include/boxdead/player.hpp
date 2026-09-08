@@ -10,6 +10,7 @@ public:
     explicit Player(float x, float y);
 
     void set_texture(Texture* tex) { sprite_.texture = tex; }
+    void set_color_override(SDL_Color c) { sprite_.color = c; }
     void update(float dt, const GameContext& ctx) override;
 
 private:
