@@ -154,11 +154,18 @@ void Game::run() {
         // renderer (e.g. Xvfb) so the framebuffer can be captured.
         bool running = true;
         const float dt = 1.0f / 60.0f;
-        const int frames = screenshot_mode_ ? 540 : 900;
+        const int frames = screenshot_mode_ ? 220 : 900;
         for (int i = 0; i < frames && running; ++i) {
             process_input(running);
             update(dt);
             render();
+            // Capture a few frames in screenshot mode so at least one lands
+            // with live enemies on screen (they spawn and die quickly).
+            if (screenshot_mode_ && (i == 90 || i == 110 || i == 140)) {
+                const std::string p =
+                    screenshot_path_ + "." + std::to_string(i) + ".bmp";
+                capture_screenshot_to(p);
+            }
         }
         if (screenshot_mode_) {
             capture_screenshot();
@@ -699,7 +706,15 @@ void Game::render() {
                           static_cast<int>(invuln_timer_ * 10.0f) % 2 == 0;
     if (flashing) player_->set_color_override(SDL_Color{220, 60, 60, 255});
 
-    for (const auto& e : entities_) e->render(renderer_);
+    // Draw entities back-to-front by ground position so closer (lower)
+    // characters correctly overlap further (higher) ones in the iso view.
+    std::vector<Entity*> order;
+    order.reserve(entities_.size());
+    for (const auto& e : entities_) order.push_back(e.get());
+    std::sort(order.begin(), order.end(), [](const Entity* a, const Entity* b) {
+        return (a->pos.y + a->size.y * 0.5f) < (b->pos.y + b->size.y * 0.5f);
+    });
+    for (const auto* e : order) e->render(renderer_);
 
     if (flashing) player_->set_color_override(SDL_Color{255, 255, 255, 255});
 
@@ -817,10 +832,12 @@ void Game::apply_gun_textures(Player& p) {
     p.set_gun_texture(WeaponKind::MachineGun, gun_hand_tex_[2].get());
 }
 
-void Game::capture_screenshot() {
+void Game::capture_screenshot() { capture_screenshot_to(screenshot_path_); }
+
+void Game::capture_screenshot_to(const std::string& path) {
     SDL_Surface* surf = SDL_RenderReadPixels(renderer_, nullptr);
     if (!surf) return;
-    SDL_SaveBMP(surf, screenshot_path_.c_str());
+    SDL_SaveBMP(surf, path.c_str());
     SDL_DestroySurface(surf);
 }
 

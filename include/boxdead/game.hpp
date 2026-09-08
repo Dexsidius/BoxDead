@@ -47,6 +47,7 @@ private:
     void spawn_enemy(const GameContext& ctx);
     void fire_projectile(float dt, const GameContext& ctx);
     void capture_screenshot();
+    void capture_screenshot_to(const std::string& path);
     void check_collisions();
     void check_item_pickups();
     void maybe_drop_item(Vec2 pos);

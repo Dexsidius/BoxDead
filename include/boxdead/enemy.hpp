@@ -16,10 +16,13 @@ public:
     EnemyKind kind() const { return kind_; }
 
     void update(float dt, const GameContext& ctx) override;
+    void render(SDL_Renderer* r) const override;
 
 private:
     EnemyKind kind_;
     float speed_;
+    float walk_phase_ = 0.0f;
+    Vec2 facing_{0.0f, 1.0f};  // toward the player
 };
 
 }  // namespace bd

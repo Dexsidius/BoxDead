@@ -1,5 +1,6 @@
 // BoxDead - Player implementation
 #include "boxdead/player.hpp"
+#include "boxdead/iso_sprite.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -109,27 +110,21 @@ void Player::update(float dt, const GameContext& ctx) {
 }
 
 void Player::render(SDL_Renderer* r) const {
-    // Body (legacy textured sprite; the isometric renderer replaces this
-    // in a later step).
-    AnimatedEntity::render(r);
-
-    // Draw the currently-equipped gun in the hand, rotated to the aim angle.
-    // The gun art points +x (right) at angle 0; the grip sits near the
-    // lower-left, so we rotate around that pivot to keep the hand stable.
-    Texture* gun = current_gun_texture();
-    if (gun && gun->get()) {
-        constexpr double kPi = 3.14159265358979323846;
-        const double angle_deg = gun_angle_ * 180.0 / kPi;
-        const float scale = 1.2f;
-        const float gw = static_cast<float>(gun->w()) * scale;
-        const float gh = static_cast<float>(gun->h()) * scale;
-        const float px_frac = 0.15f;
-        const float py_frac = 0.8f;
-        const SDL_FPoint center{px_frac * gw, py_frac * gh};
-        const SDL_FRect dst{pos.x - center.x, pos.y - center.y, gw, gh};
-        SDL_RenderTextureRotated(r, gun->get(), nullptr, &dst, angle_deg,
-                                 &center, SDL_FLIP_NONE);
-    }
+    // Isometric character: shaded 3D box body + head that yaws to face the aim
+    // direction, animated legs, and the current gun drawn in the hand.
+    const IsoCharStyle style{
+        SDL_Color{120, 190, 255, 255},  // body top (lightest)
+        SDL_Color{60, 160, 255, 255},   // body front
+        SDL_Color{40, 110, 200, 255},   // body side (dark)
+        SDL_Color{150, 205, 255, 255},  // head top
+        SDL_Color{80, 170, 255, 255},   // head front
+        SDL_Color{50, 120, 210, 255},   // head side
+        SDL_Color{50, 50, 70, 255},     // legs
+        SDL_Color{0, 0, 0, 90},        // shadow
+    };
+    draw_iso_character(r, pos.x, pos.y + size.y * 0.25f, size.x, size.y,
+                       facing_.x, facing_.y, walk_phase_, style,
+                       current_gun_texture(), gun_angle_);
 }
 
 }  // namespace bd
