@@ -34,6 +34,18 @@ constexpr int kMaxFloorItems = 3;
 const std::vector<std::string> kMainMenuItems = {"New Game", "Options", "Exit"};
 }  // namespace
 
+// Scene definitions: each map gets a distinct floor palette + a banner name.
+// Levels cycle (wrap around) so the game always has somewhere to go next.
+const Game::Level Game::kLevels[] = {
+    {"The Courtyard",   {18, 18, 24, 255},  {40, 44, 54, 255}},
+    {"The Asylum",      {24, 18, 18, 255},  {58, 40, 40, 255}},
+    {"The Sewers",      {14, 22, 20, 255},  {36, 54, 48, 255}},
+    {"The Graveyard",   {20, 20, 28, 255},  {48, 46, 64, 255}},
+    {"Hell's Gate",      {28, 14, 14, 255},  {70, 30, 30, 255}},
+};
+const int Game::kLevelCount =
+    sizeof(Game::kLevels) / sizeof(Game::kLevels[0]);
+
 Game::Game(bool smoke_test, std::string screenshot_path)
     : smoke_test_(smoke_test),
       screenshot_mode_(!screenshot_path.empty()),
@@ -159,9 +171,15 @@ void Game::run() {
             process_input(running);
             update(dt);
             render();
+            // For screenshot verification: force a scene transition at frame
+            // 100 so the fade + map swap + banner can be captured (the real
+            // game triggers this every 15 waves automatically).
+            if (screenshot_mode_ && i == 100) {
+                begin_level_transition((level_ + 1) % kLevelCount);
+            }
             // Capture a few frames in screenshot mode so at least one lands
             // with live enemies on screen (they spawn and die quickly).
-            if (screenshot_mode_ && (i == 90 || i == 110 || i == 140)) {
+            if (screenshot_mode_ && (i == 90 || i == 110 || i == 160 || i == 185)) {
                 const std::string p =
                     screenshot_path_ + "." + std::to_string(i) + ".bmp";
                 capture_screenshot_to(p);
@@ -405,11 +423,31 @@ void Game::update(float dt) {
     // When the player is dead, freeze the world (no spawns, movement, etc.).
     if (game_over_) return;
 
+    // Tick a level transition (fade to black, swap map at the midpoint, fade
+    // back in). While fading we hold spawns so the new scene starts clean.
+    const bool transitioning = transition_timer_ > 0.0f;
+    if (transitioning) {
+        const float before = transition_timer_;
+        transition_timer_ = std::max(0.0f, transition_timer_ - dt);
+        // Swap at the midpoint (when crossing below half the duration).
+        if (pending_level_ >= 0 &&
+            before > kTransitionDur * 0.5f &&
+            transition_timer_ <= kTransitionDur * 0.5f) {
+            apply_level_swap(ctx);
+        }
+    }
+    if (banner_timer_ > 0.0f) banner_timer_ = std::max(0.0f, banner_timer_ - dt);
+
     // Advance waves: each wave raises the spawn rate (shorter interval).
     wave_timer_ += dt;
     if (wave_timer_ >= wave_duration_) {
         wave_timer_ = 0.0f;
         ++wave_;
+        // Every kWavesPerLevel waves, transition to the next map/scene.
+        const int new_level = level_for_wave(wave_);
+        if (new_level != level_ && !transitioning) {
+            begin_level_transition(new_level);
+        }
     }
 
     // Spawn enemies on a timer (rate scales with wave + difficulty).
@@ -418,7 +456,7 @@ void Game::update(float dt) {
                          0.08f * static_cast<float>(wave_ - 1)) *
                         difficulty_factor());
     spawn_timer_ += dt;
-    if (spawn_timer_ >= spawn_interval) {
+    if (spawn_timer_ >= spawn_interval && !transitioning) {
         spawn_timer_ = 0.0f;
         size_t enemy_count = 0;
         for (const auto& e : entities_)
@@ -687,7 +725,9 @@ void Game::render() {
     const float ww = static_cast<float>(win_w);
     const float wh = static_cast<float>(win_h);
 
-    SDL_SetRenderDrawColor(renderer_, 18, 18, 24, SDL_ALPHA_OPAQUE);
+    const Level& lvl = current_level();
+    SDL_SetRenderDrawColor(renderer_, lvl.floor.r, lvl.floor.g, lvl.floor.b,
+                          SDL_ALPHA_OPAQUE);
     SDL_RenderClear(renderer_);
 
     if (state_ == GameState::MainMenu) {
@@ -719,6 +759,31 @@ void Game::render() {
     if (flashing) player_->set_color_override(SDL_Color{255, 255, 255, 255});
 
     render_hud();
+
+    // Level banner (shown briefly after entering a scene).
+    if (banner_timer_ > 0.0f) {
+        const std::string label = std::string(current_level().name) +
+                                  "  -  Level " + std::to_string(level_ + 1);
+        const float tw = static_cast<float>(font_.text_width(label));
+        const float x = (ww - tw) * 0.5f;
+        const float y = wh * 0.22f;
+        const float alpha =
+            std::min(1.0f, banner_timer_ * 1.5f) * 255.0f;  // fades out at the end
+        font_.draw(label, x, y,
+                   SDL_Color{235, 235, 235, static_cast<Uint8>(alpha)});
+    }
+
+    // Level-transition fade overlay (covers everything during the swap).
+    if (transition_timer_ > 0.0f) {
+        // 0 -> midpoint: fade to black; midpoint -> end: fade back in.
+        const float t = 1.0f - (transition_timer_ / kTransitionDur);
+        const float a = 1.0f - std::abs(2.0f * t - 1.0f);  // triangle, peaks at 0.5
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0,
+                               static_cast<Uint8>(a * 255.0f));
+        SDL_RenderFillRect(renderer_, nullptr);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    }
 
     SDL_RenderPresent(renderer_);
 }
@@ -824,6 +889,44 @@ void Game::reset() {
     player_ = player.get();
     apply_gun_textures(*player_);
     entities_.push_back(std::move(player));
+
+    // Fresh run: back to the first scene, no transition in flight.
+    level_ = 0;
+    transition_timer_ = 0.0f;
+    pending_level_ = -1;
+    banner_timer_ = 1.6f;  // greet the player with the level name
+}
+
+const Game::Level& Game::current_level() const {
+    return kLevels[static_cast<size_t>(level_) % kLevelCount];
+}
+
+int Game::level_for_wave(int wave) const {
+    // Waves are 1-based; every kWavesPerLevel waves advances to the next map.
+    return ((wave - 1) / kWavesPerLevel) % kLevelCount;
+}
+
+void Game::begin_level_transition(int new_level) {
+    pending_level_ = new_level;
+    transition_timer_ = kTransitionDur;
+}
+
+void Game::apply_level_swap(const GameContext& ctx) {
+    level_ = pending_level_;
+    pending_level_ = -1;
+    banner_timer_ = 2.2f;
+    // New map: clear enemies and projectiles, recentre the player.
+    entities_.erase(
+        std::remove_if(entities_.begin(), entities_.end(),
+                       [](const std::unique_ptr<Entity>& e) {
+                           return dynamic_cast<Enemy*>(e.get()) ||
+                                  dynamic_cast<Projectile*>(e.get());
+                       }),
+        entities_.end());
+    if (player_) {
+        player_->pos = {ctx.world_w * 0.5f, ctx.world_h * 0.5f};
+    }
+    spawn_timer_ = 0.0f;
 }
 
 void Game::apply_gun_textures(Player& p) {

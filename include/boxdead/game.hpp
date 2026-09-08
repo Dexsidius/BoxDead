@@ -55,6 +55,26 @@ private:
     void spawn_item_on_player();
     void reset();
 
+    // Scene / level system. Every 15 waves the world transitions to the next
+    // map (fade to black, reset positions, swap floor palette + banner).
+    struct Level {
+        const char* name;
+        SDL_Color floor;
+        SDL_Color grid;
+    };
+    static const Level kLevels[];
+    static const int kLevelCount;
+    static const int kWavesPerLevel = 15;
+    static constexpr float kTransitionDur = 1.2f;  // seconds (fade out + in)
+    int level_ = 0;
+    float transition_timer_ = 0.0f;   // >0 while a level transition is playing
+    int pending_level_ = -1;         // level to swap to at the fade midpoint
+    float banner_timer_ = 0.0f;      // shows the level name briefly after a swap
+    const Level& current_level() const;
+    int level_for_wave(int wave) const;
+    void begin_level_transition(int new_level);
+    void apply_level_swap(const GameContext& ctx);
+
     // Menu / state transitions.
     void on_main_menu_select(int index, bool& running);
     void on_options_select(int index);
