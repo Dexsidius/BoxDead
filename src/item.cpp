@@ -24,7 +24,7 @@ WeaponPickup::WeaponPickup(float x, float y, WeaponKind kind, int ammo)
     : Item(x, y, 22.0f, 22.0f), kind_(kind), ammo_(ammo) {}
 
 void WeaponPickup::on_pickup(Game& game, Player& player) {
-    player.equip_weapon(kind_, ammo_);
+    player.acquire_weapon(kind_, ammo_);
     game.show_toast(std::string(weapon_spec(kind_).name) + " acquired");
 }
 

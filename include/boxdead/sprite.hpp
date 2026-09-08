@@ -2,6 +2,7 @@
 #pragma once
 
 #include "boxdead/texture.hpp"
+#include "boxdead/weapon.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -64,5 +65,10 @@ std::unique_ptr<Texture> make_creature_sheet_texture(SDL_Renderer* r,
                                                    int frame_count,
                                                    int frame_size,
                                                    bool moving);
+
+// Procedurally generate a side-view gun sprite (muzzle pointing +x / right).
+// The grip sits at the lower-left; rotate around the grip pivot when drawing
+// it in a hand. Distinct art per weapon kind (pistol / shotgun / machine gun).
+std::unique_ptr<Texture> make_gun_texture(SDL_Renderer* r, WeaponKind k);
 
 }  // namespace bd

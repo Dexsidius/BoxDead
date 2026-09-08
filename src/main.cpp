@@ -8,8 +8,14 @@
 #include <string_view>
 
 int main(int argc, char* argv[]) {
-    const bool smoke_test =
-        argc > 1 && std::string_view(argv[1]) == "--smoke-test";
+    bool smoke_test = false;
+    std::string screenshot_path;
+    for (int i = 1; i < argc; ++i) {
+        std::string_view arg(argv[i]);
+        if (arg == "--smoke-test") smoke_test = true;
+        else if (arg == "--screenshot" && i + 1 < argc)
+            screenshot_path = argv[++i];
+    }
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';
@@ -18,8 +24,7 @@ int main(int argc, char* argv[]) {
 
     int rc = 0;
     {
-        // Game is destroyed before SDL_Quit so it can release SDL resources.
-        bd::Game game(smoke_test);
+        bd::Game game(smoke_test, screenshot_path);
         if (!game.init()) {
             rc = 1;
         } else {

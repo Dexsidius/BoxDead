@@ -1,5 +1,6 @@
 // BoxDead - Sprite implementation
 #include "boxdead/sprite.hpp"
+#include "boxdead/weapon.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -252,6 +253,95 @@ std::unique_ptr<Texture> make_creature_sheet_texture(SDL_Renderer* r,
     }
 
     return Texture::from_pixels(r, pixels.data(), sheet_w, sheet_h);
+}
+
+// --- Procedural gun sprites (side view, muzzle pointing +x / right) ---------
+// Drawn into an RGBA pixel buffer. The grip sits at the lower-left so the
+// rotation pivot (the hand) is stable; the muzzle is at the right edge.
+namespace {
+struct GunCanvas {
+    int w, h;
+    std::vector<Uint32> px;
+    explicit GunCanvas(int ww, int hh) : w(ww), h(hh), px(size_t(ww) * hh, 0) {}
+    void fill(int x0, int y0, int x1, int y1, Uint32 c) {
+        if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
+        if (x1 > w) x1 = w;
+        if (y1 > h) y1 = h;
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x)
+                px[size_t(y) * w + x] = c;
+    }
+    void dot(int x, int y, Uint32 c) {
+        if (x >= 0 && x < w && y >= 0 && y < h) px[size_t(y) * w + x] = c;
+    }
+};
+inline Uint32 gun_pack(Uint8 r, Uint8 g, Uint8 b) {
+    return Uint32(r) | (Uint32(g) << 8) | (Uint32(b) << 16) | (Uint32(255) << 24);
+}
+}  // namespace
+
+std::unique_ptr<Texture> make_gun_texture(SDL_Renderer* r, WeaponKind k) {
+    // Metal shades + a wooden grip.
+    const Uint32 dark = gun_pack(60, 60, 70);
+    const Uint32 mid = gun_pack(110, 110, 122);
+    const Uint32 light = gun_pack(165, 165, 178);
+    const Uint32 wood = gun_pack(96, 64, 40);
+    const Uint32 hl = gun_pack(205, 205, 215);
+
+    switch (k) {
+        case WeaponKind::Shotgun: {
+            GunCanvas c(36, 14);
+            // double barrel (stacked) running to the muzzle
+            c.fill(8, 4, 34, 7, light);   // top barrel
+            c.fill(8, 7, 34, 10, mid);    // bottom barrel
+            c.fill(32, 4, 34, 10, dark);  // muzzle cap
+            // pump / foregrip under the barrel
+            c.fill(12, 10, 18, 14, wood);
+            // receiver + stock toward the grip
+            c.fill(2, 5, 10, 9, mid);
+            c.fill(0, 5, 4, 9, dark);    // stock back
+            // grip
+            c.fill(3, 9, 7, 14, wood);
+            c.dot(6, 5, hl);
+            return Texture::from_pixels(r, c.px.data(), c.w, c.h);
+        }
+        case WeaponKind::MachineGun: {
+            GunCanvas c(40, 16);
+            // long thin barrel to the muzzle
+            c.fill(12, 6, 38, 9, light);
+            c.fill(35, 5, 38, 10, dark);  // muzzle
+            // receiver body
+            c.fill(2, 5, 16, 11, mid);
+            c.fill(2, 5, 4, 11, dark);     // stock back
+            // curved magazine hanging down
+            c.fill(8, 11, 12, 16, dark);
+            c.fill(7, 14, 13, 16, dark);
+            // grip
+            c.fill(2, 11, 6, 16, wood);
+            // sight on top
+            c.dot(10, 4, dark);
+            c.dot(30, 4, dark);
+            return Texture::from_pixels(r, c.px.data(), c.w, c.h);
+        }
+        case WeaponKind::Pistol:
+        default: {
+            GunCanvas c(26, 14);
+            // slide / body
+            c.fill(2, 5, 20, 9, mid);
+            c.fill(2, 5, 4, 9, dark);     // back of slide
+            // short barrel front
+            c.fill(18, 6, 24, 9, light);
+            c.fill(23, 6, 25, 9, dark);  // muzzle
+            // grip angled down-left
+            c.fill(3, 9, 8, 14, wood);
+            // trigger guard hint
+            c.fill(8, 10, 12, 12, dark);
+            // sights
+            c.dot(6, 4, dark);
+            c.dot(16, 4, dark);
+            return Texture::from_pixels(r, c.px.data(), c.w, c.h);
+        }
+    }
 }
 
 }  // namespace bd

@@ -23,7 +23,7 @@ enum class GameState { MainMenu, Options, Playing, GameOver };
 
 class Game {
 public:
-    explicit Game(bool smoke_test = false);
+    explicit Game(bool smoke_test = false, std::string screenshot_path = "");
     ~Game();
 
     Game(const Game&) = delete;
@@ -46,6 +46,7 @@ private:
     // Gameplay systems.
     void spawn_enemy(const GameContext& ctx);
     void fire_projectile(float dt, const GameContext& ctx);
+    void capture_screenshot();
     void check_collisions();
     void check_item_pickups();
     void maybe_drop_item(Vec2 pos);
@@ -59,6 +60,7 @@ private:
     void enter_options();
     void return_to_menu();
     std::string difficulty_label();
+    std::string aim_label();
     float difficulty_factor();
 
     // Picks the pickup texture for a given weapon kind.
@@ -74,8 +76,11 @@ private:
     float wave_timer_ = 0.0f;
     float wave_duration_ = 15.0f;
     int difficulty_ = 1;  // 0 Easy, 1 Normal, 2 Hard
+    AimMode aim_mode_ = AimMode::FaceMouse;  // FaceMouse or FaceMovement
 
-    // Item spawn + pickup feedback.
+    // Computes the player's aim direction this frame (used by both the gun
+    // render and firing, so the visual and bullet dir never diverge).
+    void update_player_aim(const GameContext& ctx);
     float item_spawn_timer_ = 0.0f;
     int pickups_collected_ = 0;
     int smoke_frame_ = 0;
@@ -99,11 +104,15 @@ private:
     std::unique_ptr<Texture> weapon_tex_pistol_;
     std::unique_ptr<Texture> weapon_tex_shotgun_;
     std::unique_ptr<Texture> weapon_tex_machinegun_;
+    std::unique_ptr<Texture> gun_hand_tex_[3];  // in-hand gun sprite per weapon kind
+    void apply_gun_textures(Player& p);  // hand the gun sprites to a player
     std::vector<std::unique_ptr<Entity>> entities_;
     Player* player_ = nullptr;
     float spawn_timer_ = 0.0f;
     float fire_cooldown_ = 0.0f;
     bool smoke_test_;
+    bool screenshot_mode_ = false;
+    std::string screenshot_path_;
 };
 
 }  // namespace bd
