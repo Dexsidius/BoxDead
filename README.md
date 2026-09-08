@@ -38,12 +38,27 @@ cmake --build build
 .\build\BoxDead.exe    # Windows
 ```
 
-A 1280x720 window opens with a dark background and a red placeholder square.
-Close the window or press **Esc** to exit.
+A 1280x720 window opens with a dark background, a blue player square, and
+red enemies that spawn at the screen edges and chase the player. Move with
+WASD/arrows; press **Esc** or close the window to quit.
+
+## Project structure
+
+```
+src/
+  sprite.hpp   - Texture (RAII SDL_Texture) + Sprite + draw_sprite()
+  entity.hpp   - Entity base + Player (keyboard) + Enemy (chase AI)
+  main.cpp     - game loop, spawning, rendering
+```
+
+The sprite layer draws textured quads when a texture is set, and falls back
+to a solid color otherwise. Placeholder art is generated procedurally with
+`make_solid_sprite_texture()` — swap it for `Texture::load(renderer, path)`
+to use real BMP assets (add SDL_image for PNG/JPG).
 
 ## Controls
 
-- **WASD** or **Arrow keys** - move the player square
+- **WASD** or **Arrow keys** - move the player
 - **Esc** or close the window - quit
 
 Movement is frame-rate-independent: the player moves at a fixed speed in

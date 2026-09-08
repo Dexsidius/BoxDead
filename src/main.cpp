@@ -1,52 +1,59 @@
 // BoxDead - SDL3 base template
-// Launchable SDL3 window with frame-rate-independent timing and keyboard movement.
+// Launchable SDL3 window with a sprite + entity system: a controllable
+// player and enemies that spawn at the edges and chase the player.
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
-#include <algorithm>
-#include <cmath>
+#include <cstdlib>
+#include <ctime>
 #include <iostream>
 #include <memory>
 #include <string_view>
+#include <vector>
+
+#include "entity.hpp"
+#include "sprite.hpp"
 
 namespace {
 constexpr int kWindowWidth = 1280;
 constexpr int kWindowHeight = 720;
 constexpr char kWindowTitle[] = "BoxDead";
 
-// Player movement speed in pixels per second.
-constexpr float kPlayerSpeed = 320.0f;
-constexpr float kPlayerSize = 80.0f;
+constexpr float kSpawnInterval = 1.2f;   // seconds between enemy spawns
+constexpr size_t kMaxEnemies = 50;
 
 struct SdlInitGuard {
     ~SdlInitGuard() { SDL_Quit(); }
 };
 
-// A simple movable player rendered as a colored square.
-struct Player {
+// Spawn an enemy at a random point along the screen edge.
+std::unique_ptr<Enemy> spawn_edge_enemy(float world_w, float world_h,
+                                        Texture* tex) {
+    const int edge = std::rand() % 4;
     float x = 0.0f;
     float y = 0.0f;
-
-    void center(float w, float h) {
-        x = (w - kPlayerSize) * 0.5f;
-        y = (h - kPlayerSize) * 0.5f;
+    const float margin = 20.0f;
+    switch (edge) {
+        case 0:  // top
+            x = static_cast<float>(std::rand() % static_cast<int>(world_w));
+            y = margin;
+            break;
+        case 1:  // bottom
+            x = static_cast<float>(std::rand() % static_cast<int>(world_w));
+            y = world_h - margin;
+            break;
+        case 2:  // left
+            x = margin;
+            y = static_cast<float>(std::rand() % static_cast<int>(world_h));
+            break;
+        default:  // right
+            x = world_w - margin;
+            y = static_cast<float>(std::rand() % static_cast<int>(world_h));
+            break;
     }
-};
-
-// Read directional input into a normalized vector (units per second).
-void read_input(const bool* keys, float& dx, float& dy) {
-    dx = 0.0f;
-    dy = 0.0f;
-    if (keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_LEFT]) dx -= 1.0f;
-    if (keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_RIGHT]) dx += 1.0f;
-    if (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP]) dy -= 1.0f;
-    if (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN]) dy += 1.0f;
-    // Normalize diagonals so diagonal speed isn't ~1.41x faster.
-    if (dx != 0.0f && dy != 0.0f) {
-        const float inv = 1.0f / std::sqrt(2.0f);
-        dx *= inv;
-        dy *= inv;
-    }
+    auto e = std::make_unique<Enemy>(x, y);
+    e->set_texture(tex);
+    return e;
 }
 }  // namespace
 
@@ -81,21 +88,33 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Center the player in the initial drawable area.
+    // Build procedural sprite textures (swap make_solid_sprite_texture for
+    // Texture::load(...) to use real art assets).
+    auto player_tex = make_solid_sprite_texture(
+        renderer.get(), SDL_Color{60, 160, 255, 255}, 32);
+    auto enemy_tex = make_solid_sprite_texture(
+        renderer.get(), SDL_Color{220, 45, 45, 255}, 32);
+
+    std::srand(static_cast<unsigned>(std::time(nullptr)));
+
+    // Entities: player first, enemies after.
+    std::vector<std::unique_ptr<Entity>> entities;
+    auto player = std::make_unique<Player>(kWindowWidth * 0.5f,
+                                           kWindowHeight * 0.5f);
+    player->set_texture(player_tex.get());
+    Player* player_ptr = player.get();
+    entities.push_back(std::move(player));
+
     int draw_w = kWindowWidth;
     int draw_h = kWindowHeight;
     SDL_GetCurrentRenderOutputSize(renderer.get(), &draw_w, &draw_h);
-    Player player;
-    player.center(static_cast<float>(draw_w), static_cast<float>(draw_h));
 
-    // Frame-rate-independent loop using high-resolution ticks (nanoseconds).
+    float spawn_timer = 0.0f;
     Uint64 last_time = SDL_GetTicksNS();
     bool running = true;
 
     while (running) {
         const Uint64 now = SDL_GetTicksNS();
-        // Delta time in seconds, clamped to avoid the "spiral of death"
-        // after a long stall (e.g. window dragged / breakpoint).
         float dt = static_cast<float>(now - last_time) / 1.0e9f;
         last_time = now;
         if (dt > 0.25f) dt = 0.25f;
@@ -114,34 +133,51 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Continuous keyboard movement (polled state, not per-press events).
-        const bool* keys = SDL_GetKeyboardState(nullptr);
-        float dx = 0.0f;
-        float dy = 0.0f;
-        read_input(keys, dx, dy);
-        player.x += dx * kPlayerSpeed * dt;
-        player.y += dy * kPlayerSpeed * dt;
-
-        // Keep the player inside the current drawable area (resizable window).
         SDL_GetCurrentRenderOutputSize(renderer.get(), &draw_w, &draw_h);
-        const float max_x = static_cast<float>(draw_w) - kPlayerSize;
-        const float max_y = static_cast<float>(draw_h) - kPlayerSize;
-        player.x = std::clamp(player.x, 0.0f, max_x);
-        player.y = std::clamp(player.y, 0.0f, max_y);
+
+        GameContext ctx;
+        ctx.keys = SDL_GetKeyboardState(nullptr);
+        ctx.world_w = static_cast<float>(draw_w);
+        ctx.world_h = static_cast<float>(draw_h);
+
+        // Update the player first so enemies can chase its new position.
+        player_ptr->update(dt, ctx);
+        ctx.player_pos = player_ptr->pos;
+
+        // Spawn enemies on a timer.
+        spawn_timer += dt;
+        if (spawn_timer >= kSpawnInterval) {
+            spawn_timer = 0.0f;
+            size_t enemy_count = 0;
+            for (const auto& e : entities)
+                if (dynamic_cast<Enemy*>(e.get())) ++enemy_count;
+            if (enemy_count < kMaxEnemies) {
+                entities.push_back(spawn_edge_enemy(
+                    ctx.world_w, ctx.world_h, enemy_tex.get()));
+            }
+        }
+
+        // Update everything except the player (already updated).
+        for (auto& e : entities) {
+            if (e.get() != player_ptr) e->update(dt, ctx);
+        }
+
+        // Remove dead entities (currently none die; hook for combat later).
+        entities.erase(
+            std::remove_if(entities.begin(), entities.end(),
+                           [](const std::unique_ptr<Entity>& e) {
+                               return !e->alive;
+                           }),
+            entities.end());
 
         // Render
         SDL_SetRenderDrawColor(renderer.get(), 18, 18, 24, SDL_ALPHA_OPAQUE);
         SDL_RenderClear(renderer.get());
-
-        SDL_SetRenderDrawColor(renderer.get(), 220, 45, 45, SDL_ALPHA_OPAQUE);
-        const SDL_FRect player_rect{player.x, player.y, kPlayerSize,
-                                    kPlayerSize};
-        SDL_RenderFillRect(renderer.get(), &player_rect);
-
+        for (const auto& e : entities) e->render(renderer.get());
         SDL_RenderPresent(renderer.get());
 
-        if (smoke_test) running = false;  // one frame then exit, for CI
-        SDL_Delay(1);                     // yield CPU, vsync handles the cap
+        if (smoke_test) running = false;
+        SDL_Delay(1);
     }
 
     return 0;
