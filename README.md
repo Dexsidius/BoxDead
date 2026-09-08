@@ -163,7 +163,7 @@ with a tie and blood, and two legs running a 4-phase walk):
 ## Windows build
 
 A prebuilt Windows x64 build is included in `dist/` of this repo:
-`dist/BoxDead-v0.1.0-windows-x64.zip`. Unzip it and double-click
+`dist/BoxDead-v0.1.1-windows-x64.zip`. Unzip it and double-click
 `BoxDead.exe`; keep `SDL3.dll`, `SDL3_ttf.dll`, and the `assets/` folder next
 to the exe. It is cross-compiled from Linux with MinGW-w64 against SDL3 3.4.16
 and SDL3_ttf 3.2.2 and bundles the runtime DLLs and font.
