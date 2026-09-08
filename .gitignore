@@ -3,6 +3,10 @@
 /out/
 /cache/
 
+# Test binaries (compiled by hand from test_*.cpp)
+/test_animator
+/test_weapon
+
 # CMake
 CMakeCache.txt
 CMakeFiles/
