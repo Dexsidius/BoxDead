@@ -41,6 +41,16 @@ cmake --build build
 A 1280x720 window opens with a dark background and a red placeholder square.
 Close the window or press **Esc** to exit.
 
+## Controls
+
+- **WASD** or **Arrow keys** - move the player square
+- **Esc** or close the window - quit
+
+Movement is frame-rate-independent: the player moves at a fixed speed in
+pixels per second regardless of FPS, so it feels the same on 60 Hz and
+144 Hz displays. Diagonal movement is normalized so it isn't faster than
+cardinal movement.
+
 ## Smoke test (no display required)
 
 ```bash
