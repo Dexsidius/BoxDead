@@ -28,8 +28,15 @@ void Font::draw(const std::string& text, float x, float y, SDL_Color color) {
         SDL_Surface* s = TTF_RenderText_Blended(font_, text.c_str(),
                                                 text.size(), color);
         if (!s) return;
-        cache_[text] = Texture::from_pixels(renderer_, s->pixels, s->w, s->h);
+        // Let SDL convert the surface to a texture directly: it honors the
+        // surface's real pixel format and pitch, which avoids the garbled
+        // text that a manual pitch of w*4 produced on Windows (SDL_ttf pads
+        // row pitch to alignment there).
+        SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
         SDL_DestroySurface(s);
+        if (!t) return;
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+        cache_[text] = std::make_unique<Texture>(t);
         it = cache_.find(text);
         if (it == cache_.end()) return;
     }
