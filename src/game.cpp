@@ -530,27 +530,43 @@ void Game::update(float dt) {
 }
 
 void Game::spawn_enemy(const GameContext& ctx) {
-    const int edge = std::rand() % 4;
-    const float margin = 20.0f;
+    // Spawn just inside the wall border (the border tiles are solid, so an
+    // enemy spawning at the true screen edge would be trapped inside the wall
+    // and pile up stuck). Keep a margin larger than the wall thickness and, if
+    // a tileset is loaded, retry until the spawn point is on walkable ground.
+    const float wall = 32.0f;       // wall border thickness (one tile)
+    const float margin = wall + 16.0f;  // spawn band just inside the wall (body clears the border)
     float x = 0.0f;
     float y = 0.0f;
-    switch (edge) {
-        case 0:  // top
-            x = static_cast<float>(std::rand() % static_cast<int>(ctx.world_w));
-            y = margin;
-            break;
-        case 1:  // bottom
-            x = static_cast<float>(std::rand() % static_cast<int>(ctx.world_w));
-            y = ctx.world_h - margin;
-            break;
-        case 2:  // left
-            x = margin;
-            y = static_cast<float>(std::rand() % static_cast<int>(ctx.world_h));
-            break;
-        default:  // right
-            x = ctx.world_w - margin;
-            y = static_cast<float>(std::rand() % static_cast<int>(ctx.world_h));
-            break;
+    const int edge = std::rand() % 4;
+    const int w_lo = static_cast<int>(margin);
+    const int w_hi = static_cast<int>(ctx.world_w - margin);
+    const int h_lo = static_cast<int>(margin);
+    const int h_hi = static_cast<int>(ctx.world_h - margin);
+    const int span_x = std::max(1, w_hi - w_lo);
+    const int span_y = std::max(1, h_hi - h_lo);
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        switch (edge) {
+            case 0:  // top
+                x = static_cast<float>(w_lo + std::rand() % span_x);
+                y = margin;
+                break;
+            case 1:  // bottom
+                x = static_cast<float>(w_lo + std::rand() % span_x);
+                y = ctx.world_h - margin;
+                break;
+            case 2:  // left
+                x = margin;
+                y = static_cast<float>(h_lo + std::rand() % span_y);
+                break;
+            default:  // right
+                x = ctx.world_w - margin;
+                y = static_cast<float>(h_lo + std::rand() % span_y);
+                break;
+        }
+        if (!ctx.tilemap || !ctx.tilemap->is_solid(x, y)) break;
+        // landed on a solid obstacle tile: loop and try a different position
+        // along the same edge.
     }
     // Pick the enemy kind: zombies always; the tougher red Devil appears
     // from wave 2 onward (25% chance) as a special enemy.
