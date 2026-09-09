@@ -323,6 +323,40 @@ std::unique_ptr<Texture> make_gun_texture(SDL_Renderer* r, WeaponKind k) {
             c.dot(30, 4, dark);
             return Texture::from_pixels(r, c.px.data(), c.w, c.h);
         }
+        case WeaponKind::RocketLauncher: {
+            GunCanvas c(42, 16);
+            // fat launch tube with a flared muzzle and a rear venturi
+            c.fill(6, 4, 36, 11, mid);
+            c.fill(34, 2, 40, 13, dark);   // muzzle flare
+            c.fill(0, 5, 6, 10, dark);     // back blast cone
+            c.fill(10, 1, 22, 4, dark);    // optic block
+            c.fill(12, 2, 20, 3, hl);
+            c.fill(14, 11, 20, 16, wood);  // grip
+            c.fill(24, 11, 30, 14, mid);   // forward handle
+            return Texture::from_pixels(r, c.px.data(), c.w, c.h);
+        }
+        // The thrown weapons are held, not fired: draw the fist-sized object
+        // itself so the in-hand sprite reads as a grenade rather than a gun.
+        case WeaponKind::Grenade:
+        case WeaponKind::Concussion:
+        case WeaponKind::Lure: {
+            const Uint32 shell =
+                (k == WeaponKind::Grenade)    ? gun_pack(74, 92, 58)
+                : (k == WeaponKind::Concussion) ? gun_pack(70, 108, 150)
+                                                : gun_pack(150, 120, 48);
+            const Uint32 shell_hi =
+                (k == WeaponKind::Grenade)    ? gun_pack(104, 128, 82)
+                : (k == WeaponKind::Concussion) ? gun_pack(104, 150, 198)
+                                                : gun_pack(198, 168, 78);
+            GunCanvas c(16, 16);
+            c.fill(3, 5, 13, 15, shell);       // body
+            c.fill(4, 6, 8, 10, shell_hi);     // lit shoulder
+            c.fill(5, 2, 11, 5, dark);         // fuse cap
+            c.fill(6, 0, 10, 2, mid);          // spoon
+            c.fill(3, 8, 13, 9, dark);         // banding
+            c.fill(3, 11, 13, 12, dark);
+            return Texture::from_pixels(r, c.px.data(), c.w, c.h);
+        }
         case WeaponKind::Pistol:
         default: {
             GunCanvas c(26, 14);

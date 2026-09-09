@@ -86,6 +86,17 @@ private:
     static const char* boss_name(int level);
     // Dark-Souls-style name + health bar across the bottom of the screen.
     void render_boss_bar();
+
+    // --- Aiming feedback ---------------------------------------------------
+    // Distance from (x,y) along a unit direction to the first solid tile, or
+    // `max_dist` if nothing blocks it. Used to stop the aim ray at walls.
+    float ray_distance(float x, float y, float dx, float dy,
+                       float max_dist) const;
+    // The aim ray (one line per edge of the current weapon's spread cone) and
+    // the crosshair drawn in place of the system cursor.
+    void render_aim_overlay();
+    // Cursor position in logical view coordinates, refreshed every frame.
+    Vec2 cursor_view_{};
     void fire_projectile(float dt, const GameContext& ctx);
     void capture_screenshot();
     void capture_screenshot_to(const std::string& path);
@@ -104,6 +115,13 @@ private:
     // radius, lights the fuse on other barrels (chain reaction), and spawns
     // the fireball. Never called while iterating entities_.
     void detonate(Vec2 pos);
+    // The general blast, shared by barrels, rockets and every grenade: damages
+    // enemies (and the player) inside `radius`, optionally stunning or luring
+    // them, chains into other barrels, and spawns the fireball.
+    void explode(Vec2 pos, float radius, int damage, float stun_seconds,
+                 float lure_radius, float lure_seconds);
+    // Detonate any projectile that asked to go off this frame.
+    void update_projectile_blasts();
     std::vector<Obstacle> obstacles_;  // living barrels, rebuilt each frame
 
     void check_item_pickups();
@@ -204,6 +222,9 @@ private:
     // Must stay 0: that is the whole point of clearing waves rather than
     // timing them, so the smoke summary reports it as a regression check.
     int wave_gate_violations_ = 0;
+    int projectile_blasts_ = 0;      // rockets/grenades detonated (smoke metric)
+    int enemies_stunned_ = 0;        // concussion freezes applied (smoke metric)
+    int enemies_lured_ = 0;          // lure pulls applied (smoke metric)
     std::string pickup_toast_;
     float pickup_toast_timer_ = 0.0f;
 
@@ -224,7 +245,13 @@ private:
     std::unique_ptr<Texture> weapon_tex_pistol_;
     std::unique_ptr<Texture> weapon_tex_shotgun_;
     std::unique_ptr<Texture> weapon_tex_machinegun_;
-    std::unique_ptr<Texture> gun_hand_tex_[3];  // in-hand gun sprite per weapon kind
+    std::unique_ptr<Texture> gun_hand_tex_[Player::kSlotCount];  // per weapon kind
+    std::unique_ptr<Texture> rocket_tex_;    // rocket in flight
+    std::unique_ptr<Texture> grenade_tex_;   // thrown frag
+    std::unique_ptr<Texture> concussion_tex_;
+    std::unique_ptr<Texture> lure_tex_;
+    // Projectile art for a weapon's shots (bullet, rocket or grenade).
+    Texture* projectile_tex_for(WeaponKind k);
     void apply_gun_textures(Player& p);  // hand the gun sprites to a player
     // Scene tilemap (LevelEdit++ ".mx" tileset) for the current level.
     Tilemap tilemap_;

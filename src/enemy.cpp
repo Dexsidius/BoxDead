@@ -123,7 +123,22 @@ int Enemy::fire_count() const { return stats_for(kind_).count; }
 float Enemy::fire_spread_deg() const { return stats_for(kind_).spread; }
 
 void Enemy::update(float dt, const GameContext& ctx) {
-    Vec2 d{ctx.player_pos.x - pos.x, ctx.player_pos.y - pos.y};
+    if (stun_ > 0.0f) {
+        // Frozen: no movement, no walk cycle, and the Game skips it when
+        // handing out ranged attacks. Tinted pale blue so the player can see
+        // which enemies the concussion caught.
+        stun_ = std::max(0.0f, stun_ - dt);
+        sprite_.color = SDL_Color{150, 190, 255, 255};
+        update_animator(dt);
+        return;
+    }
+    sprite_.color = SDL_Color{255, 255, 255, 255};
+    if (lure_ > 0.0f) lure_ = std::max(0.0f, lure_ - dt);
+
+    // Lured enemies walk to the lure point instead of at the player; once the
+    // lure expires (or they arrive) they go back to hunting.
+    const Vec2 target = (lure_ > 0.0f) ? lure_pos_ : ctx.player_pos;
+    Vec2 d{target.x - pos.x, target.y - pos.y};
     const float len = std::sqrt(d.x * d.x + d.y * d.y);
     if (len > 1.0f) {
         d.x /= len;
