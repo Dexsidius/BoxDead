@@ -157,6 +157,10 @@ bool Game::init() {
     apply_gun_textures(*player_);
     if (smoke_test_ || screenshot_mode_) player_->health = 1000;  // survive the whole smoke run
     entities_.push_back(std::move(player));
+    // Smoke/screenshot skip the main menu, so they never go through reset();
+    // load the first scene's tileset here so the floor renders and collision
+    // is exercised from the first frame.
+    if (smoke_test_ || screenshot_mode_) load_current_tilemap();
     return true;
 }
 
