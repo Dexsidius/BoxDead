@@ -6,9 +6,18 @@
 
 #include <SDL3/SDL.h>
 
+#include <vector>
+
 namespace bd {
 
 class Tilemap;  // forward declaration (defined in boxdead/tilemap.hpp)
+
+// A dynamic blocker: something that stops movement but is not part of the
+// static tileset (currently only barrels, which can be destroyed).
+struct Obstacle {
+    Vec2 pos;   // centre
+    Vec2 size;  // full width/height
+};
 
 // Shared per-frame state passed to every entity's update().
 struct GameContext {
@@ -17,6 +26,12 @@ struct GameContext {
     float world_h = 0.0f;
     Vec2 player_pos;              // updated before enemies tick
     const Tilemap* tilemap = nullptr;  // current scene tileset (for collision)
+    const std::vector<Obstacle>* obstacles = nullptr;  // barrels, ...
+
+    // True if a world point is inside a solid tile or a dynamic obstacle.
+    // Movement code steps per-axis through this so entities slide along
+    // walls and barrels instead of sticking to them.
+    bool blocked(float px, float py) const;
 };
 
 // Base entity: position (centered), size, velocity, alive flag.

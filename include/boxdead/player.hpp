@@ -75,7 +75,7 @@ public:
     void render(SDL_Renderer* r, float cam_x, float cam_y) const override;
 
 private:
-    IsoCharStyle style_{};  // body/head/leg palette (character skin)
+    IsoCharStyle style_{};  // skin/hair/shirt/pants palette (character skin)
     float speed_;
     bool owned_[kSlotCount] = {true, false, false};
     int ammo_[kSlotCount] = {-1, 0, 0};   // -1 = infinite

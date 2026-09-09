@@ -93,17 +93,13 @@ void Player::update(float dt, const GameContext& ctx) {
         last_move_dir_.x = dx;
         last_move_dir_.y = dy;
     }
-    // Move per-axis so the player slides along walls instead of sticking. Each
-    // axis is blocked if the destination center lands inside a solid tile.
+    // Move per-axis so the player slides along walls and barrels instead of
+    // sticking. Each axis is blocked if the destination centre lands inside a
+    // solid tile or a dynamic obstacle.
     const float step_x = dx * speed_ * dt;
     const float step_y = dy * speed_ * dt;
-    if (ctx.tilemap) {
-        if (!ctx.tilemap->is_solid(pos.x + step_x, pos.y)) pos.x += step_x;
-        if (!ctx.tilemap->is_solid(pos.x, pos.y + step_y)) pos.y += step_y;
-    } else {
-        pos.x += step_x;
-        pos.y += step_y;
-    }
+    if (!ctx.blocked(pos.x + step_x, pos.y)) pos.x += step_x;
+    if (!ctx.blocked(pos.x, pos.y + step_y)) pos.y += step_y;
 
     // Clamp to the world bounds.
     const float hw = size.x * 0.5f;
@@ -120,11 +116,19 @@ void Player::update(float dt, const GameContext& ctx) {
 }
 
 void Player::render(SDL_Renderer* r, float cam_x, float cam_y) const {
-    // Isometric character: shaded 3D box body + head that yaws to face the aim
-    // direction, animated legs, and the current gun drawn in the hand. The
+    // Isometric character: shaded, outlined box body + head that yaws to face
+    // the aim direction, animated legs, arms holding the current gun. The
     // palette comes from the character-select screen (default blue).
-    const IsoCharStyle style = style_;
-    draw_iso_character(r, pos.x - cam_x, pos.y + size.y * 0.25f - cam_y, size.x, size.y,
+    IsoCharStyle style = style_;
+    // sprite_.color carries the i-frame flash the Game sets on a hit; feed it
+    // in as the palette tint so every part of the figure flashes together.
+    style.tint = sprite_.color;
+    // Drawn larger than the collision box on purpose: a Boxhead survivor
+    // reads as about one and a half tiles tall, but a hitbox that size would
+    // make the player impossible to squeeze between obstacles.
+    constexpr float kDrawScale = 1.4f;
+    draw_iso_character(r, pos.x - cam_x, pos.y + size.y * 0.25f - cam_y,
+                       size.x * kDrawScale, size.y * kDrawScale,
                        facing_.x, facing_.y, walk_phase_, style,
                        current_gun_texture(), gun_angle_);
 }

@@ -18,6 +18,11 @@
 // each tile once and renders every placement. Tiles whose name contains a
 // solid keyword ("wall", "block", "rock", "stone", "barrier", "fence",
 // "crate", "pillar", "obstacle") are treated as collidable.
+//
+// Tiles whose name contains an explosive keyword ("barrel", "drum",
+// "explosive", "tnt") are not drawn or collided as tiles at all: their
+// placements are handed to the Game, which spawns a destructible Barrel
+// entity at each one so they can be shot, explode, and chain-react.
 #pragma once
 
 #include "boxdead/texture.hpp"
@@ -53,6 +58,15 @@ public:
     // viewport scrolls: screen = world - camera.
     void render(SDL_Renderer* r, float cam_x, float cam_y) const;
 
+    // Where the level wants an explosive barrel. These come from tiles named
+    // with an explosive keyword and are NOT part of the drawn/collided tile
+    // list — the Game turns each one into a Barrel entity on load.
+    struct Spawn {
+        float cx, cy;  // centre of the placement, in world pixels
+        float w, h;
+    };
+    const std::vector<Spawn>& explosive_spawns() const { return explosives_; }
+
     // Bounding box of every placed tile (max x+w, max y+h). The game uses this
     // as the world size for a level (maps can be bigger than the viewport).
     void world_bounds(float& out_w, float& out_h) const;
@@ -73,6 +87,7 @@ private:
 
     std::vector<std::unique_ptr<Texture>> textures_;  // owns the .bmp textures
     std::vector<Placement> tiles_;
+    std::vector<Spawn> explosives_;
     bool loaded_ = false;
 };
 

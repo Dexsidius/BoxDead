@@ -11,9 +11,6 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-#ifdef _WIN32
-#include <ciso646>  // MinGW: provide `and`/`or`/`not` keywords
-#endif
 
 using json = nlohmann::json;
 
@@ -47,12 +44,28 @@ bool name_is_solid(const std::string& name) {
     return false;
 }
 
+// Case-insensitive test for tiles the level author meant as explosive props.
+// Checked before the solid test so "Explosive Barrel" becomes a barrel rather
+// than a wall.
+bool name_is_explosive(const std::string& name) {
+    static const char* kExplosiveKeywords[] = {"barrel", "drum", "explosive",
+                                               "tnt"};
+    std::string lower;
+    lower.reserve(name.size());
+    for (char c : name) lower.push_back(static_cast<char>(std::tolower(c)));
+    for (const char* kw : kExplosiveKeywords) {
+        if (lower.find(kw) != std::string::npos) return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 Tilemap::~Tilemap() { clear(); }
 
 void Tilemap::clear() {
     tiles_.clear();
+    explosives_.clear();
     textures_.clear();
     loaded_ = false;
 }
@@ -82,6 +95,26 @@ bool Tilemap::load(SDL_Renderer* r, const std::string& mx_path) {
         const std::string tile_name = it.key();
         const json& entry = it.value();
         if (!entry.is_object()) continue;
+
+        // Explosive tiles never become tiles: collect their placements for
+        // the Game to spawn Barrel entities from, and skip loading their .bmp
+        // (barrels are drawn as 3D props, not flat tile images).
+        if (name_is_explosive(tile_name)) {
+            const auto& locs = entry.value("locations", json::array());
+            if (!locs.is_array()) continue;
+            for (const auto& loc : locs) {
+                if (!loc.is_array() || loc.size() < 2) continue;
+                const float x = static_cast<float>(loc[0].get<int>());
+                const float y = static_cast<float>(loc[1].get<int>());
+                const float w =
+                    (loc.size() > 2) ? static_cast<float>(loc[2].get<int>()) : 32.0f;
+                const float h =
+                    (loc.size() > 3) ? static_cast<float>(loc[3].get<int>()) : 32.0f;
+                explosives_.push_back(
+                    Spawn{x + w * 0.5f, y + h * 0.5f, w, h});
+            }
+            continue;
+        }
 
         std::string filepath =
             entry.value("filepath", std::string{});
