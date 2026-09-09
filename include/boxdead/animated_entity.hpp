@@ -26,7 +26,7 @@ public:
     size_t animator_frame_index() const { return animator_.frame_index(); }
     bool animator_playing() const { return animator_.texture() != nullptr; }
 
-    void render(SDL_Renderer* r) const override;
+    void render(SDL_Renderer* r, float cam_x, float cam_y) const override;
 
 protected:
     Animator animator_;

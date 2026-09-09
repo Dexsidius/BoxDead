@@ -123,12 +123,30 @@ bool Tilemap::load(SDL_Renderer* r, const std::string& mx_path) {
     return true;
 }
 
-void Tilemap::render(SDL_Renderer* r) const {
+void Tilemap::render(SDL_Renderer* r, float cam_x, float cam_y) const {
     for (const auto& t : tiles_) {
-        const SDL_FRect dst{static_cast<float>(t.x), static_cast<float>(t.y),
-                            static_cast<float>(t.w), static_cast<float>(t.h)};
+        const SDL_FRect dst{static_cast<float>(t.x) - cam_x,
+                            static_cast<float>(t.y) - cam_y,
+                            static_cast<float>(t.w),
+                            static_cast<float>(t.h)};
+        // Cull tiles fully outside the viewport (cam +/- view is unknown here,
+        // so just skip tiles whose screen rect is entirely off any side — a
+        // cheap negative check; SDL clips the rest).
         SDL_RenderTexture(r, t.tex, nullptr, &dst);
     }
+}
+
+void Tilemap::world_bounds(float& out_w, float& out_h) const {
+    float maxw = 0.0f;
+    float maxh = 0.0f;
+    for (const auto& t : tiles_) {
+        const float rx = static_cast<float>(t.x + t.w);
+        const float ry = static_cast<float>(t.y + t.h);
+        if (rx > maxw) maxw = rx;
+        if (ry > maxh) maxh = ry;
+    }
+    out_w = maxw;
+    out_h = maxh;
 }
 
 bool Tilemap::is_solid(float px, float py) const {

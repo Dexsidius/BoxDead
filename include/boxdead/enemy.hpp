@@ -16,7 +16,7 @@ public:
     EnemyKind kind() const { return kind_; }
 
     void update(float dt, const GameContext& ctx) override;
-    void render(SDL_Renderer* r) const override;
+    void render(SDL_Renderer* r, float cam_x, float cam_y) const override;
 
 private:
     EnemyKind kind_;

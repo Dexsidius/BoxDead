@@ -119,7 +119,7 @@ void Player::update(float dt, const GameContext& ctx) {
     update_animator(dt);
 }
 
-void Player::render(SDL_Renderer* r) const {
+void Player::render(SDL_Renderer* r, float cam_x, float cam_y) const {
     // Isometric character: shaded 3D box body + head that yaws to face the aim
     // direction, animated legs, and the current gun drawn in the hand.
     const IsoCharStyle style{
@@ -132,7 +132,7 @@ void Player::render(SDL_Renderer* r) const {
         SDL_Color{50, 50, 70, 255},     // legs
         SDL_Color{0, 0, 0, 90},        // shadow
     };
-    draw_iso_character(r, pos.x, pos.y + size.y * 0.25f, size.x, size.y,
+    draw_iso_character(r, pos.x - cam_x, pos.y + size.y * 0.25f - cam_y, size.x, size.y,
                        facing_.x, facing_.y, walk_phase_, style,
                        current_gun_texture(), gun_angle_);
 }

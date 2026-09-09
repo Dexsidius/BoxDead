@@ -49,7 +49,13 @@ public:
     void clear();
 
     // Draw every tile placement (floor + walls). Call after SDL_RenderClear.
-    void render(SDL_Renderer* r) const;
+    // `cam_x/cam_y` subtract the camera position so a world larger than the
+    // viewport scrolls: screen = world - camera.
+    void render(SDL_Renderer* r, float cam_x, float cam_y) const;
+
+    // Bounding box of every placed tile (max x+w, max y+h). The game uses this
+    // as the world size for a level (maps can be bigger than the viewport).
+    void world_bounds(float& out_w, float& out_h) const;
 
     // True if a world-space point lies inside any solid tile. Used by the
     // player/enemy movement to block walking through walls.

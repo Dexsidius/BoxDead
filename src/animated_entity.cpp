@@ -14,7 +14,7 @@ void AnimatedEntity::add_animation(const std::string& name, Texture* tex,
     animator_.add(name, a);
 }
 
-void AnimatedEntity::render(SDL_Renderer* r) const {
+void AnimatedEntity::render(SDL_Renderer* r, float cam_x, float cam_y) const {
     if (animator_playing() && animator_.frame()) {
         // Compose a sprite from the current animation frame, keeping the
         // entity's color as the tint (preserves the player's i-frame flash).
@@ -22,9 +22,9 @@ void AnimatedEntity::render(SDL_Renderer* r) const {
         s.texture = animator_.texture();
         s.src = *animator_.frame();
         s.color = sprite_.color;
-        draw_sprite(r, s, pos.x, pos.y, size.x, size.y);
+        draw_sprite(r, s, pos.x - cam_x, pos.y - cam_y, size.x, size.y);
     } else {
-        draw_sprite(r, sprite_, pos.x, pos.y, size.x, size.y);
+        draw_sprite(r, sprite_, pos.x - cam_x, pos.y - cam_y, size.x, size.y);
     }
 }
 

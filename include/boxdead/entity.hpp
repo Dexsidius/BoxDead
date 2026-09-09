@@ -33,7 +33,9 @@ public:
     virtual ~Entity() = default;
 
     virtual void update(float /*dt*/, const GameContext& /*ctx*/) {}
-    virtual void render(SDL_Renderer* r) const;
+    // Draw the entity. `cam_x/cam_y` subtract the camera so a world larger
+    // than the viewport scrolls: screen = world - camera.
+    virtual void render(SDL_Renderer* r, float cam_x, float cam_y) const;
 
     // Apply damage; sets alive=false when health drops to zero.
     void damage(int amount) {

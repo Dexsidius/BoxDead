@@ -66,6 +66,11 @@ bool Game::init() {
         std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << '\n';
         return false;
     }
+    // Keep gameplay coordinates at a fixed 1280x720 logical view; SDL scales it
+    // to the (resizable / fullscreen) window with letterboxing. The camera
+    // scrolls within worlds larger than this view.
+    SDL_SetRenderLogicalPresentation(renderer_, kViewWidth, kViewHeight,
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
     player_walk_sheet_ = make_walk_sheet_texture(
         renderer_, SDL_Color{60, 160, 255, 255}, 4, 32, true);
@@ -148,8 +153,20 @@ bool Game::init() {
     menu_.set_items(kMainMenuItems);
     state_ = (smoke_test_ || screenshot_mode_) ? GameState::Playing : GameState::MainMenu;
 
+    // Smoke/screenshot skip the main menu, so they never go through reset();
+    // load the first scene's tileset here so the world size is known before we
+    // place the player at the world centre.
+    if (smoke_test_ || screenshot_mode_) {
+        level_ = 0;
+        load_current_tilemap();
+    }
+
+    const float px = (smoke_test_ || screenshot_mode_) ? world_w_ * 0.5f
+                                                         : static_cast<float>(kViewWidth) * 0.5f;
+    const float py = (smoke_test_ || screenshot_mode_) ? world_h_ * 0.5f
+                                                         : static_cast<float>(kViewHeight) * 0.5f;
     auto player =
-        std::make_unique<Player>(kWindowWidth * 0.5f, kWindowHeight * 0.5f);
+        std::make_unique<Player>(px, py);
     player->add_animation("walk", player_walk_sheet_.get(), 4, 32, 0.12f, true);
     player->add_animation("idle", player_idle_sheet_.get(), 2, 32, 0.28f, true);
     player->play_animation("idle");
@@ -157,10 +174,7 @@ bool Game::init() {
     apply_gun_textures(*player_);
     if (smoke_test_ || screenshot_mode_) player_->health = 1000;  // survive the whole smoke run
     entities_.push_back(std::move(player));
-    // Smoke/screenshot skip the main menu, so they never go through reset();
-    // load the first scene's tileset here so the floor renders and collision
-    // is exercised from the first frame.
-    if (smoke_test_ || screenshot_mode_) load_current_tilemap();
+    update_camera();
     return true;
 }
 
@@ -221,17 +235,24 @@ void Game::run() {
 }
 
 void Game::process_input(bool& running) {
-    int win_w = kWindowWidth;
-    int win_h = kWindowHeight;
-    SDL_GetWindowSize(window_, &win_w, &win_h);
-    const float ww = static_cast<float>(win_w);
-    const float wh = static_cast<float>(win_h);
+    // Logical view size for menu/HUD layout (window may be resized/fullscreen).
+    const float ww = static_cast<float>(kViewWidth);
+    const float wh = static_cast<float>(kViewHeight);
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_QUIT) {
             running = false;
             return;
+        }
+        // Global: F11 toggles fullscreen (borderless) on any screen. The
+        // logical presentation keeps the 1280x720 view scaled to fit.
+        if (event.type == SDL_EVENT_KEY_DOWN &&
+            event.key.key == SDLK_F11) {
+            const uint32_t current = SDL_GetWindowFlags(window_);
+            const bool fs = (current & SDL_WINDOW_FULLSCREEN) != 0;
+            SDL_SetWindowFullscreen(window_, !fs);
+            continue;
         }
         switch (state_) {
             case GameState::MainMenu: {
@@ -382,17 +403,20 @@ void Game::update_player_aim(const GameContext& ctx) {
             dy /= l;
         }
     } else {
-        // FaceMouse: aim from the player toward the cursor.
-        int win_w = kWindowWidth;
-        int win_h = kWindowHeight;
-        SDL_GetWindowSize(window_, &win_w, &win_h);
+        // FaceMouse: aim from the player toward the cursor. Convert the window
+        // mouse position into logical render coords (handles letterbox scaling
+        // from SDL_SetRenderLogicalPresentation), then to world coords by
+        // adding the camera offset.
         float mx = 0.0f;
         float my = 0.0f;
         SDL_GetMouseState(&mx, &my);
-        const float sx = ctx.world_w / static_cast<float>(win_w);
-        const float sy = ctx.world_h / static_cast<float>(win_h);
-        dx = mx * sx - player_->pos.x;
-        dy = my * sy - player_->pos.y;
+        float lx = 0.0f;
+        float ly = 0.0f;
+        SDL_RenderCoordinatesFromWindow(renderer_, mx, my, &lx, &ly);
+        const float world_mx = lx + camera_.x;
+        const float world_my = ly + camera_.y;
+        dx = world_mx - player_->pos.x;
+        dy = world_my - player_->pos.y;
         const float len = std::sqrt(dx * dx + dy * dy);
         if (len < 0.001f) {
             dx = 0.0f;
@@ -408,18 +432,18 @@ void Game::update_player_aim(const GameContext& ctx) {
 void Game::update(float dt) {
     if (state_ != GameState::Playing) return;
 
-    int draw_w = kWindowWidth;
-    int draw_h = kWindowHeight;
-    SDL_GetCurrentRenderOutputSize(renderer_, &draw_w, &draw_h);
-
     GameContext ctx;
     ctx.keys = SDL_GetKeyboardState(nullptr);
-    ctx.world_w = static_cast<float>(draw_w);
-    ctx.world_h = static_cast<float>(draw_h);
+    // World size comes from the loaded map (not the window), so maps larger
+    // than the viewport scroll under the camera.
+    ctx.world_w = world_w_;
+    ctx.world_h = world_h_;
     ctx.tilemap = &tilemap_;
 
     // Update the player first so enemies can chase its new position.
     player_->update(dt, ctx);
+    // Scroll the camera to follow the player, clamped to the world bounds.
+    update_camera();
     ctx.player_pos = player_->pos;
 
     // Compute the player's aim direction once: the gun render and the firing
@@ -531,38 +555,50 @@ void Game::update(float dt) {
 
 void Game::spawn_enemy(const GameContext& ctx) {
     // Spawn just inside the wall border (the border tiles are solid, so an
-    // enemy spawning at the true screen edge would be trapped inside the wall
-    // and pile up stuck). Keep a margin larger than the wall thickness and, if
-    // a tileset is loaded, retry until the spawn point is on walkable ground.
+    // enemy spawning at the true edge would be trapped inside the wall and
+    // pile up stuck). On a large world, spawn near the current camera view
+    // edges (not the far world edges) so enemies approach the player from the
+    // sides of the visible play area, Boxhead-style.
     const float wall = 32.0f;       // wall border thickness (one tile)
     const float margin = wall + 16.0f;  // spawn band just inside the wall (body clears the border)
+    // Camera view bounds in world space.
+    const float vx0 = camera_.x;
+    const float vy0 = camera_.y;
+    const float vx1 = camera_.x + static_cast<float>(kViewWidth);
+    const float vy1 = camera_.y + static_cast<float>(kViewHeight);
     float x = 0.0f;
     float y = 0.0f;
     const int edge = std::rand() % 4;
-    const int w_lo = static_cast<int>(margin);
-    const int w_hi = static_cast<int>(ctx.world_w - margin);
-    const int h_lo = static_cast<int>(margin);
-    const int h_hi = static_cast<int>(ctx.world_h - margin);
-    const int span_x = std::max(1, w_hi - w_lo);
-    const int span_y = std::max(1, h_hi - h_lo);
+    // Spawn along a chosen edge of the camera view, clamped inside the world
+    // and clear of the wall border.
+    const auto lo = [&](float v, float lo0) { return std::max(lo0, v); };
+    const auto hi = [&](float v, float hi0) { return std::min(hi0, v); };
+    const float mx_lo = margin;
+    const float mx_hi = std::max(margin + 1.0f, ctx.world_w - margin);
+    const float my_lo = margin;
+    const float my_hi = std::max(margin + 1.0f, ctx.world_h - margin);
     for (int attempt = 0; attempt < 8; ++attempt) {
         switch (edge) {
-            case 0:  // top
-                x = static_cast<float>(w_lo + std::rand() % span_x);
-                y = margin;
+            case 0: {  // top edge of the view
+                x = lo(vx0 + std::rand() % std::max(1, static_cast<int>(vx1 - vx0)), mx_lo);
+                y = lo(vy0 + margin, my_lo);
                 break;
-            case 1:  // bottom
-                x = static_cast<float>(w_lo + std::rand() % span_x);
-                y = ctx.world_h - margin;
+            }
+            case 1: {  // bottom edge of the view
+                x = lo(vx0 + std::rand() % std::max(1, static_cast<int>(vx1 - vx0)), mx_lo);
+                y = hi(vy1 - margin, my_hi);
                 break;
-            case 2:  // left
-                x = margin;
-                y = static_cast<float>(h_lo + std::rand() % span_y);
+            }
+            case 2: {  // left edge of the view
+                x = lo(vx0 + margin, mx_lo);
+                y = lo(vy0 + std::rand() % std::max(1, static_cast<int>(vy1 - vy0)), my_lo);
                 break;
-            default:  // right
-                x = ctx.world_w - margin;
-                y = static_cast<float>(h_lo + std::rand() % span_y);
+            }
+            default: {  // right edge of the view
+                x = hi(vx1 - margin, mx_hi);
+                y = lo(vy0 + std::rand() % std::max(1, static_cast<int>(vy1 - vy0)), my_lo);
                 break;
+            }
         }
         if (!ctx.tilemap || !ctx.tilemap->is_solid(x, y)) break;
         // landed on a solid obstacle tile: loop and try a different position
@@ -693,10 +729,17 @@ void Game::spawn_floor_item(const GameContext& ctx) {
         if (dynamic_cast<Item*>(e.get())) ++count;
     if (count >= kMaxFloorItems) return;
 
-    const float x = 60.0f + static_cast<float>(
-                               std::rand() % static_cast<int>(ctx.world_w - 120));
-    const float y = 60.0f + static_cast<float>(
-                               std::rand() % static_cast<int>(ctx.world_h - 120));
+    // Spawn floor items within the current camera view (plus a margin) so
+    // pickups appear near the player on large worlds, not at the far edges.
+    const float vx0 = camera_.x, vy0 = camera_.y;
+    const float vx1 = camera_.x + static_cast<float>(kViewWidth);
+    const float vy1 = camera_.y + static_cast<float>(kViewHeight);
+    const float x = std::clamp(vx0 + 60.0f +
+                               static_cast<float>(std::rand() % std::max(1, static_cast<int>(vx1 - vx0 - 120.0f))),
+                               60.0f, std::max(61.0f, ctx.world_w - 60.0f));
+    const float y = std::clamp(vy0 + 60.0f +
+                               static_cast<float>(std::rand() % std::max(1, static_cast<int>(vy1 - vy0 - 120.0f))),
+                               60.0f, std::max(61.0f, ctx.world_h - 60.0f));
     if (std::rand() % 2 == 0) {
         auto it = std::make_unique<HealthPickup>(x, y);
         it->set_texture(health_tex_.get());
@@ -741,11 +784,11 @@ Texture* Game::weapon_pickup_tex(WeaponKind k) {
 }
 
 void Game::render() {
-    int win_w = kWindowWidth;
-    int win_h = kWindowHeight;
-    SDL_GetWindowSize(window_, &win_w, &win_h);
-    const float ww = static_cast<float>(win_w);
-    const float wh = static_cast<float>(win_h);
+    // Logical view size — the window may be resized/fullscreen, but gameplay
+    // coordinates stay fixed (SDL scales the view to the window). Use these
+    // for all screen-space layout (menu, HUD, banners).
+    const float ww = static_cast<float>(kViewWidth);
+    const float wh = static_cast<float>(kViewHeight);
 
     const Level& lvl = current_level();
     SDL_SetRenderDrawColor(renderer_, lvl.floor.r, lvl.floor.g, lvl.floor.b,
@@ -753,8 +796,9 @@ void Game::render() {
     SDL_RenderClear(renderer_);
 
     // Draw the scene tileset (LevelEdit++ ".mx"). On load failure the floor
-    // stays the solid fallback color above.
-    if (tilemap_.loaded()) tilemap_.render(renderer_);
+    // stays the solid fallback color above. Offset by the camera so a world
+    // larger than the viewport scrolls.
+    if (tilemap_.loaded()) tilemap_.render(renderer_, camera_.x, camera_.y);
 
     if (state_ == GameState::MainMenu) {
         menu_.render(font_, "BOXDEAD", ww, wh);
@@ -780,7 +824,7 @@ void Game::render() {
     std::sort(order.begin(), order.end(), [](const Entity* a, const Entity* b) {
         return (a->pos.y + a->size.y * 0.5f) < (b->pos.y + b->size.y * 0.5f);
     });
-    for (const auto* e : order) e->render(renderer_);
+    for (const auto* e : order) e->render(renderer_, camera_.x, camera_.y);
 
     if (flashing) player_->set_color_override(SDL_Color{255, 255, 255, 255});
 
@@ -907,21 +951,23 @@ void Game::reset() {
     pickup_toast_.clear();
     state_ = GameState::Playing;
 
+    // Load the scene first so the world size is known, then spawn the player
+    // at the world centre (maps can be larger than the viewport).
+    level_ = 0;
+    transition_timer_ = 0.0f;
+    pending_level_ = -1;
+    banner_timer_ = 1.6f;  // greet the player with the level name
+    load_current_tilemap();
+
     auto player =
-        std::make_unique<Player>(kWindowWidth * 0.5f, kWindowHeight * 0.5f);
+        std::make_unique<Player>(world_w_ * 0.5f, world_h_ * 0.5f);
     player->add_animation("walk", player_walk_sheet_.get(), 4, 32, 0.12f, true);
     player->add_animation("idle", player_idle_sheet_.get(), 2, 32, 0.28f, true);
     player->play_animation("idle");
     player_ = player.get();
     apply_gun_textures(*player_);
     entities_.push_back(std::move(player));
-
-    // Fresh run: back to the first scene, no transition in flight.
-    level_ = 0;
-    transition_timer_ = 0.0f;
-    pending_level_ = -1;
-    banner_timer_ = 1.6f;  // greet the player with the level name
-    load_current_tilemap();
+    update_camera();
 }
 
 const Game::Level& Game::current_level() const {
@@ -952,17 +998,42 @@ void Game::apply_level_swap(const GameContext& ctx) {
                        }),
         entities_.end());
     if (player_) {
-        player_->pos = {ctx.world_w * 0.5f, ctx.world_h * 0.5f};
+        // world_w_/h_ still reflect the old map here; load the new tileset
+        // first so we can place the player at the new world centre.
+        load_current_tilemap();
+        player_->pos = {world_w_ * 0.5f, world_h_ * 0.5f};
+    } else {
+        load_current_tilemap();
     }
     spawn_timer_ = 0.0f;
-    load_current_tilemap();
+}
+
+void Game::update_camera() {
+    if (!player_) return;
+    // Centre the viewport on the player, clamped so the camera never shows
+    // past the world edges (no void beyond the map).
+    const float max_x = std::max(0.0f, world_w_ - static_cast<float>(kViewWidth));
+    const float max_y = std::max(0.0f, world_h_ - static_cast<float>(kViewHeight));
+    camera_.x = std::clamp(player_->pos.x - static_cast<float>(kViewWidth) * 0.5f,
+                           0.0f, max_x);
+    camera_.y = std::clamp(player_->pos.y - static_cast<float>(kViewHeight) * 0.5f,
+                           0.0f, max_y);
 }
 
 void Game::load_current_tilemap() {
     // Load the ".mx" tileset for the current scene; if it fails the floor
     // falls back to the solid level color (render() checks tilemap_.loaded()).
     tilemap_.clear();
-    tilemap_.load(renderer_, current_level().map_path);
+    const bool ok = tilemap_.load(renderer_, current_level().map_path);
+    // World size = the map's tile bounds, so worlds can be larger than the
+    // viewport and scroll under the camera. Fall back to the view size.
+    float mw = static_cast<float>(kViewWidth);
+    float mh = static_cast<float>(kViewHeight);
+    if (ok) tilemap_.world_bounds(mw, mh);
+    world_w_ = std::max(mw, static_cast<float>(kViewWidth));
+    world_h_ = std::max(mh, static_cast<float>(kViewHeight));
+    // Recentre the camera on the new world immediately.
+    update_camera();
 }
 
 void Game::apply_gun_textures(Player& p) {

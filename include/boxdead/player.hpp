@@ -68,7 +68,7 @@ public:
 
     void set_color_override(SDL_Color c) { sprite_.color = c; }
     void update(float dt, const GameContext& ctx) override;
-    void render(SDL_Renderer* r) const override;
+    void render(SDL_Renderer* r, float cam_x, float cam_y) const override;
 
 private:
     float speed_;

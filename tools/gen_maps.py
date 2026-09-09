@@ -15,7 +15,9 @@ import os
 import struct
 
 TILE = 32
-COLS, ROWS = 40, 22  # 1280 x 704
+# Larger than the viewport so the camera scrolls. 80x44 = 2560 x 1408
+# (the 1280x720 view shows about half the map at once).
+COLS, ROWS = 80, 44
 
 LEVELS = [
     {"name": "Courtyard",   "ground": (40, 44, 54),   "wall": (74, 80, 96),   "block": (96, 106, 126)},
@@ -66,10 +68,17 @@ def build_level(level):
 
     ground_locs, wall_locs, block_locs = [], [], []
 
-    # Scatter pattern of interior Block obstacles (symmetric, avoids center).
-    obstacles = {(6, 5), (33, 5), (6, 16), (33, 16),
-                 (12, 9), (27, 9), (12, 12), (27, 12),
-                 (3, 10), (36, 10), (20, 3), (20, 18)}
+    # Scatter interior Block obstacles in a loose symmetric pattern that
+    # scales with the grid and leaves the centre spawn area open.
+    import math
+    obstacles = set()
+    cx, cy = COLS // 2, ROWS // 2
+    # ring of blocks around the centre, plus corner clusters
+    for r in range(4, ROWS - 4, 6):
+        for c in range(4, COLS - 4, 6):
+            if (c - cx) ** 2 + (r - cy) ** 2 < 36:  # keep centre clear
+                continue
+            obstacles.add((c, r))
 
     for row in range(ROWS):
         for col in range(COLS):

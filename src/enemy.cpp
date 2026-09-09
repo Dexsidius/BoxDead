@@ -42,7 +42,7 @@ void Enemy::update(float dt, const GameContext& ctx) {
     update_animator(dt);
 }
 
-void Enemy::render(SDL_Renderer* r) const {
+void Enemy::render(SDL_Renderer* r, float cam_x, float cam_y) const {
     IsoCharStyle style;
     if (kind_ == EnemyKind::Devil) {
         style = IsoCharStyle{
@@ -67,7 +67,7 @@ void Enemy::render(SDL_Renderer* r) const {
             SDL_Color{0, 0, 0, 90},
         };
     }
-    draw_iso_character(r, pos.x, pos.y + size.y * 0.25f, size.x, size.y,
+    draw_iso_character(r, pos.x - cam_x, pos.y + size.y * 0.25f - cam_y, size.x, size.y,
                        facing_.x, facing_.y, walk_phase_, style, nullptr,
                        0.0f);
 }

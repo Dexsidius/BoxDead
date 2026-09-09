@@ -18,6 +18,20 @@
 
 namespace bd {
 
+// Logical render size (the "camera" viewport). The window can be resized or
+// fullscreened; SDL scales this fixed view to the window with letterboxing, so
+// gameplay coordinates stay stable regardless of window size.
+inline constexpr int kViewWidth = 1280;
+inline constexpr int kViewHeight = 720;
+
+// A scrollable camera. Worlds (maps) may be larger than the viewport; the
+// camera follows the player and clamps to the world bounds. Everything world-
+// space is drawn at (world - camera) to land on screen.
+struct Camera {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
 // High-level game state. The run loop dispatches input/update/render based
 // on the current state, so the menu, options, and gameplay never overlap.
 enum class GameState { MainMenu, Options, Playing, GameOver };
@@ -134,6 +148,13 @@ private:
     void apply_gun_textures(Player& p);  // hand the gun sprites to a player
     // Scene tilemap (LevelEdit++ ".mx" tileset) for the current level.
     Tilemap tilemap_;
+    // World size for the current level (from the tilemap bounds, or the view
+    // size if no map loaded). Decoupled from the window so maps can be larger
+    // than the screen and scroll under the camera.
+    float world_w_ = static_cast<float>(kViewWidth);
+    float world_h_ = static_cast<float>(kViewHeight);
+    Camera camera_;
+    void update_camera();  // follow the player, clamp to world bounds
     std::vector<std::unique_ptr<Entity>> entities_;
     Player* player_ = nullptr;
     float spawn_timer_ = 0.0f;
