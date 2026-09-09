@@ -191,13 +191,69 @@ banner), enemies and projectiles are cleared, and the player is recentered.
 Levels cycle (Courtyard -> Asylum -> Sewers -> Graveyard -> Hell's Gate) so
 play continues indefinitely with a changing backdrop.
 
+Each scene's floor, walls, and obstacles are rendered from a tileset authored in
+the [LevelEdit++](https://github.com/TheSardonicals/LevelEdit-Plus/tree/dexsidius-dev)
+level editor (the `dexsidius-dev` branch). See "Level design (tilesets)" below.
+
+## Level design (tilesets)
+
+Scene layouts are `.mx` JSON tilesets exported by the LevelEdit++ editor. BoxDead
+loads them at runtime via a small tilemap system (`src/tilemap.cpp`,
+`include/boxdead/tilemap.hpp`) backed by the vendored single-header JSON parser at
+`include/nlohmann/json.hpp`.
+
+### Editor export format
+
+An `.mx` file is plain JSON. Each scene is a folder under `assets/maps/<Level>/`
+containing the `.mx` plus an `assets/` subfolder of `.bmp` tile images:
+
+```json
+{
+    "name": "Courtyard",
+    "tiles": {
+        "Ground": {
+            "filepath": "assets/Ground.bmp",
+            "locations": [[32, 32, 32, 32], [64, 32, 32, 32], ...]
+        },
+        "Wall":  { "filepath": "assets/Wall.bmp",  "locations": [...] },
+        "Block": { "filepath": "assets/Block.bmp", "locations": [...] }
+    }
+}
+```
+
+- `filepath` is relative to the `.mx` file's directory (the editor writes
+  `assets/<TileName>.bmp`).
+- `locations` is a list of `[x, y, w, h]` world-pixel placements (default tile
+  size 32x32). The player/enemies collide with solid tiles.
+
+### Solid tiles (collision)
+
+The `.mx` format is purely visual, so BoxDead infers collision from the tile
+**name**. A tile is solid (blocks movement) if its name contains any of
+(case-insensitive): `wall`, `block`, `rock`, `stone`, `barrier`, `fence`,
+`crate`, `pillar`, `obstacle`. Name your blocking tiles accordingly in the
+editor and the player/enemies will slide along them instead of walking through.
+
+### Adding a new scene
+
+1. Build a map in LevelEdit++ using `.bmp` tiles (32x32). Name walls/blocks with a
+   solid keyword if they should block movement.
+2. Export to `.mx` into a folder like `assets/maps/MyLevel/` with its tile `.bmp`s
+   in `assets/maps/MyLevel/assets/`.
+3. Add a `Level` entry in `src/game.cpp` (`kLevels[]`) pointing `map_path` at the
+   new `.mx`. Give it a fallback `floor` color used if the file fails to load.
+
+If a map fails to load (missing file, bad JSON), the scene falls back to a solid
+floor color and the game keeps running. Regenerate the bundled sample maps with
+`python3 tools/gen_maps.py`.
+
 ## Windows build
 
 A prebuilt Windows x64 build is included in `dist/` of this repo:
 `dist/BoxDead-v0.1.2-windows-x64.zip`. Unzip it and double-click
 `BoxDead.exe`; keep `SDL3.dll`, `SDL3_ttf.dll`, and the `assets/` folder next
 to the exe. It is cross-compiled from Linux with MinGW-w64 against SDL3 3.4.16
-and SDL3_ttf 3.2.2 and bundles the runtime DLLs and font.
+and SDL3_ttf 3.2.2 and bundles the runtime DLLs, font, and scene tilesets.
 
 ## Smoke test (no display required)
 
@@ -220,4 +276,9 @@ g++ -std=c++20 -I include test_weapon.cpp src/player.cpp src/weapon.cpp \
     src/entity.cpp src/animated_entity.cpp src/animation.cpp \
     src/sprite.cpp src/texture.cpp -lSDL3 -o test_weapon
 ./test_weapon
+
+# Tilemap loader: every scene .mx parses and yields tiles.
+g++ -std=c++20 -I include -I /usr/include/SDL3 test_tilemap.cpp \
+    src/tilemap.cpp src/texture.cpp -lSDL3 -o test_tilemap
+SDL_VIDEO_DRIVER=dummy ./test_tilemap
 ```
