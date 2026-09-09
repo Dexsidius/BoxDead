@@ -159,16 +159,30 @@ void draw_iso_character(SDL_Renderer* r, float cx, float cy, float w, float h,
     draw_box(r, cx, cy, body, yaw, style.body_top, style.body_front,
              style.body_side);
 
-    // Legs: two small boxes poking out in front of the body base, alternating
-    // height with the walk phase. Drawn after the body so they read in front.
-    const float swing = std::sin(walk_phase);
-    const float leg_z[2] = {leg_h * (0.55f + 0.45f * std::abs(swing)),
-                            leg_h * (0.55f + 0.45f * std::abs(std::sin(walk_phase + kPi)))};
+    // Legs: two small boxes poking out in front of the body base. They swing
+    // forward/back out of phase (one strides forward while the other trails)
+    // and lift/lower out of phase, so it reads as a walk cycle instead of a
+    // synchronized hop. Drawn after the body so they read in front.
+    //
+    // phase0 = sin(walk_phase); phase1 = sin(walk_phase + pi) = -phase0, so the
+    // two legs are always exactly opposite — no abs() (that collapsed them to
+    // the same height and made both legs hop together).
+    const float phase0 = std::sin(walk_phase);
+    const float phase1 = std::sin(walk_phase + kPi);
+    const float stride = hd * 0.45f;  // forward/back swing distance
+    // Height: taller = planted/extended, shorter = lifted/swinging. Clamp so a
+    // leg never disappears entirely.
+    const float leg_z[2] = {
+        std::max(0.2f, leg_h * (0.55f + 0.45f * phase0)),
+        std::max(0.2f, leg_h * (0.55f + 0.45f * phase1)),
+    };
+    const float leg_stride[2] = {stride * std::cos(walk_phase),
+                                 stride * std::cos(walk_phase + kPi)};
     const float leg_off = hw * 0.5f;
     for (int s = 0; s < 2; ++s) {
         Box leg{};
         leg.cxw = (s == 0 ? leg_off : -leg_off);
-        leg.cyw = hd * 1.15f;
+        leg.cyw = hd * 1.15f + leg_stride[s];  // swing forward/back
         leg.czw = 0.0f;
         leg.hw = leg_hw;
         leg.hd = leg_hd;

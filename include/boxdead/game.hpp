@@ -7,6 +7,7 @@
 #include "boxdead/player.hpp"
 #include "boxdead/projectile.hpp"
 #include "boxdead/texture.hpp"
+#include "boxdead/tilemap.hpp"
 #include "boxdead/weapon.hpp"
 
 #include <SDL3/SDL.h>
@@ -59,7 +60,8 @@ private:
     // map (fade to black, reset positions, swap floor palette + banner).
     struct Level {
         const char* name;
-        SDL_Color floor;
+        const char* map_path;  // LevelEdit++ ".mx" tileset to load for this scene
+        SDL_Color floor;      // fallback floor color if the map fails to load
         SDL_Color grid;
     };
     static const Level kLevels[];
@@ -74,6 +76,9 @@ private:
     int level_for_wave(int wave) const;
     void begin_level_transition(int new_level);
     void apply_level_swap(const GameContext& ctx);
+    // Loads the current scene's ".mx" tileset into tilemap_. Returns false
+    // (and leaves the floor as a solid color) if the file is missing/broken.
+    void load_current_tilemap();
 
     // Menu / state transitions.
     void on_main_menu_select(int index, bool& running);
@@ -127,6 +132,8 @@ private:
     std::unique_ptr<Texture> weapon_tex_machinegun_;
     std::unique_ptr<Texture> gun_hand_tex_[3];  // in-hand gun sprite per weapon kind
     void apply_gun_textures(Player& p);  // hand the gun sprites to a player
+    // Scene tilemap (LevelEdit++ ".mx" tileset) for the current level.
+    Tilemap tilemap_;
     std::vector<std::unique_ptr<Entity>> entities_;
     Player* player_ = nullptr;
     float spawn_timer_ = 0.0f;

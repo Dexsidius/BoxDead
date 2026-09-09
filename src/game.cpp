@@ -34,14 +34,15 @@ constexpr int kMaxFloorItems = 3;
 const std::vector<std::string> kMainMenuItems = {"New Game", "Options", "Exit"};
 }  // namespace
 
-// Scene definitions: each map gets a distinct floor palette + a banner name.
-// Levels cycle (wrap around) so the game always has somewhere to go next.
+// Scene definitions: each map loads a LevelEdit++ ".mx" tileset and has a
+// fallback floor color if the tileset is missing. Levels cycle (wrap around)
+// so the game always has somewhere to go next.
 const Game::Level Game::kLevels[] = {
-    {"The Courtyard",   {18, 18, 24, 255},  {40, 44, 54, 255}},
-    {"The Asylum",      {24, 18, 18, 255},  {58, 40, 40, 255}},
-    {"The Sewers",      {14, 22, 20, 255},  {36, 54, 48, 255}},
-    {"The Graveyard",   {20, 20, 28, 255},  {48, 46, 64, 255}},
-    {"Hell's Gate",      {28, 14, 14, 255},  {70, 30, 30, 255}},
+    {"The Courtyard",  "assets/maps/Courtyard/Courtyard.mx",  {18, 18, 24, 255},  {40, 44, 54, 255}},
+    {"The Asylum",     "assets/maps/Asylum/Asylum.mx",        {24, 18, 18, 255},  {58, 40, 40, 255}},
+    {"The Sewers",     "assets/maps/Sewers/Sewers.mx",       {14, 22, 20, 255},  {36, 54, 48, 255}},
+    {"The Graveyard",  "assets/maps/Graveyard/Graveyard.mx", {20, 20, 28, 255},  {48, 46, 64, 255}},
+    {"Hell's Gate",     "assets/maps/Hells Gate/Hells Gate.mx",{28, 14, 14, 255},  {70, 30, 30, 255}},
 };
 const int Game::kLevelCount =
     sizeof(Game::kLevels) / sizeof(Game::kLevels[0]);
@@ -411,6 +412,7 @@ void Game::update(float dt) {
     ctx.keys = SDL_GetKeyboardState(nullptr);
     ctx.world_w = static_cast<float>(draw_w);
     ctx.world_h = static_cast<float>(draw_h);
+    ctx.tilemap = &tilemap_;
 
     // Update the player first so enemies can chase its new position.
     player_->update(dt, ctx);
@@ -730,6 +732,10 @@ void Game::render() {
                           SDL_ALPHA_OPAQUE);
     SDL_RenderClear(renderer_);
 
+    // Draw the scene tileset (LevelEdit++ ".mx"). On load failure the floor
+    // stays the solid fallback color above.
+    if (tilemap_.loaded()) tilemap_.render(renderer_);
+
     if (state_ == GameState::MainMenu) {
         menu_.render(font_, "BOXDEAD", ww, wh);
         SDL_RenderPresent(renderer_);
@@ -895,6 +901,7 @@ void Game::reset() {
     transition_timer_ = 0.0f;
     pending_level_ = -1;
     banner_timer_ = 1.6f;  // greet the player with the level name
+    load_current_tilemap();
 }
 
 const Game::Level& Game::current_level() const {
@@ -915,7 +922,8 @@ void Game::apply_level_swap(const GameContext& ctx) {
     level_ = pending_level_;
     pending_level_ = -1;
     banner_timer_ = 2.2f;
-    // New map: clear enemies and projectiles, recentre the player.
+    // New map: clear enemies and projectiles, recentre the player, load the
+    // new scene's tileset.
     entities_.erase(
         std::remove_if(entities_.begin(), entities_.end(),
                        [](const std::unique_ptr<Entity>& e) {
@@ -927,6 +935,14 @@ void Game::apply_level_swap(const GameContext& ctx) {
         player_->pos = {ctx.world_w * 0.5f, ctx.world_h * 0.5f};
     }
     spawn_timer_ = 0.0f;
+    load_current_tilemap();
+}
+
+void Game::load_current_tilemap() {
+    // Load the ".mx" tileset for the current scene; if it fails the floor
+    // falls back to the solid level color (render() checks tilemap_.loaded()).
+    tilemap_.clear();
+    tilemap_.load(renderer_, current_level().map_path);
 }
 
 void Game::apply_gun_textures(Player& p) {

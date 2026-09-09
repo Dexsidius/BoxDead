@@ -8,12 +8,15 @@
 
 namespace bd {
 
+class Tilemap;  // forward declaration (defined in boxdead/tilemap.hpp)
+
 // Shared per-frame state passed to every entity's update().
 struct GameContext {
     const bool* keys = nullptr;   // SDL keyboard state array
     float world_w = 0.0f;
     float world_h = 0.0f;
     Vec2 player_pos;              // updated before enemies tick
+    const Tilemap* tilemap = nullptr;  // current scene tileset (for collision)
 };
 
 // Base entity: position (centered), size, velocity, alive flag.

@@ -1,6 +1,7 @@
 // BoxDead - Player implementation
 #include "boxdead/player.hpp"
 #include "boxdead/iso_sprite.hpp"
+#include "boxdead/tilemap.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -92,8 +93,17 @@ void Player::update(float dt, const GameContext& ctx) {
         last_move_dir_.x = dx;
         last_move_dir_.y = dy;
     }
-    pos.x += dx * speed_ * dt;
-    pos.y += dy * speed_ * dt;
+    // Move per-axis so the player slides along walls instead of sticking. Each
+    // axis is blocked if the destination center lands inside a solid tile.
+    const float step_x = dx * speed_ * dt;
+    const float step_y = dy * speed_ * dt;
+    if (ctx.tilemap) {
+        if (!ctx.tilemap->is_solid(pos.x + step_x, pos.y)) pos.x += step_x;
+        if (!ctx.tilemap->is_solid(pos.x, pos.y + step_y)) pos.y += step_y;
+    } else {
+        pos.x += step_x;
+        pos.y += step_y;
+    }
 
     // Clamp to the world bounds.
     const float hw = size.x * 0.5f;

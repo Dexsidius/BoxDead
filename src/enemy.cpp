@@ -1,6 +1,7 @@
 // BoxDead - Enemy implementation
 #include "boxdead/enemy.hpp"
 #include "boxdead/iso_sprite.hpp"
+#include "boxdead/tilemap.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -22,8 +23,16 @@ void Enemy::update(float dt, const GameContext& ctx) {
     if (len > 1.0f) {
         d.x /= len;
         d.y /= len;
-        pos.x += d.x * speed_ * dt;
-        pos.y += d.y * speed_ * dt;
+        const float sx = d.x * speed_ * dt;
+        const float sy = d.y * speed_ * dt;
+        // Slide along walls: block each axis if it enters a solid tile.
+        if (ctx.tilemap) {
+            if (!ctx.tilemap->is_solid(pos.x + sx, pos.y)) pos.x += sx;
+            if (!ctx.tilemap->is_solid(pos.x, pos.y + sy)) pos.y += sy;
+        } else {
+            pos.x += sx;
+            pos.y += sy;
+        }
         facing_ = d;  // face the player
     }
 
