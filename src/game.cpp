@@ -40,17 +40,22 @@ const std::vector<std::string> kMainMenuItems = {"New Game", "Options", "Exit"};
 // fallback floor color if the tileset is missing. Levels cycle (wrap around)
 // so the game always has somewhere to go next.
 const Game::Level Game::kLevels[] = {
-    {"The Courtyard",  "assets/maps/Courtyard/Courtyard.mx",  {18, 18, 24, 255},  {40, 44, 54, 255}},
-    {"The Asylum",     "assets/maps/Asylum/Asylum.mx",        {24, 18, 18, 255},  {58, 40, 40, 255}},
-    {"The Sewers",     "assets/maps/Sewers/Sewers.mx",       {14, 22, 20, 255},  {36, 54, 48, 255}},
-    {"The Graveyard",  "assets/maps/Graveyard/Graveyard.mx", {20, 20, 28, 255},  {48, 46, 64, 255}},
-    {"Hell's Gate",     "assets/maps/Hells Gate/Hells Gate.mx",{28, 14, 14, 255},  {70, 30, 30, 255}},
+    {"The Courtyard",  "assets/maps/Courtyard/Courtyard.mx",  {28, 30, 24, 255},  {52, 56, 44, 255}},
+    {"The Asylum",     "assets/maps/Asylum/Asylum.mx",        {32, 32, 28, 255},  {60, 60, 52, 255}},
+    {"The Sewers",     "assets/maps/Sewers/Sewers.mx",       {18, 28, 24, 255},  {34, 50, 42, 255}},
+    {"The Graveyard",  "assets/maps/Graveyard/Graveyard.mx", {22, 20, 28, 255},  {40, 38, 50, 255}},
+    {"Hell's Gate",     "assets/maps/Hells Gate/Hells Gate.mx",{30, 14, 12, 255},  {58, 26, 22, 255}},
+    // The stress-test scene: 103x64 tiles (3296x2048), roughly 7000 placements.
+    {"The Sprawl",     "assets/maps/The Sprawl/The Sprawl.mx",{26, 26, 28, 255},  {48, 48, 52, 255}},
 };
 const int Game::kLevelCount =
     sizeof(Game::kLevels) / sizeof(Game::kLevels[0]);
 
-Game::Game(bool smoke_test, std::string screenshot_path, bool menu_shot)
+Game::Game(bool smoke_test, std::string screenshot_path, bool menu_shot,
+           int smoke_frames, int start_level)
     : smoke_test_(smoke_test),
+      smoke_frames_(smoke_frames),
+      start_level_(start_level),
       screenshot_mode_(!screenshot_path.empty()),
       menu_shot_(menu_shot),
       screenshot_path_(std::move(screenshot_path)) {}
@@ -172,7 +177,7 @@ bool Game::init() {
     // load the first scene's tileset here so the world size is known before we
     // place the player at the world centre.
     if (smoke_test_ || screenshot_mode_) {
-        level_ = 0;
+        level_ = ((start_level_ % kLevelCount) + kLevelCount) % kLevelCount;
         load_current_tilemap();
     }
 
@@ -191,6 +196,19 @@ bool Game::init() {
     if (smoke_test_ || screenshot_mode_) player_->health = 1000;  // survive the whole smoke run
     entities_.push_back(std::move(player));
     update_camera();
+    if (smoke_test_ || screenshot_mode_) {
+        // These modes skip the menu (and so reset()), so seed the first wave
+        // here. It has to be a wave that *belongs* to the starting scene:
+        // level_for_wave() drives the scene transition every frame, so opening
+        // on --level 4 at wave 1 would immediately drag the world back to the
+        // scene wave 1 belongs to.
+        GameContext ctx;
+        ctx.world_w = world_w_;
+        ctx.world_h = world_h_;
+        ctx.tilemap = &tilemap_;
+        ctx.obstacles = &obstacles_;
+        begin_wave(level_ * kWavesPerLevel + 1, ctx);
+    }
     return true;
 }
 
@@ -223,7 +241,9 @@ void Game::run() {
         // renderer (e.g. Xvfb) so the framebuffer can be captured.
         bool running = true;
         const float dt = 1.0f / 60.0f;
-        const int frames = screenshot_mode_ ? 220 : 900;
+        const int frames = screenshot_mode_
+                               ? 220
+                               : (smoke_frames_ > 0 ? smoke_frames_ : 900);
         for (int i = 0; i < frames && running; ++i) {
             process_input(running);
             update(dt);
@@ -233,7 +253,8 @@ void Game::run() {
             if (screenshot_mode_ &&
                 (i == 90 || i == 110 || i == 160 || i == 185 ||
                  i == 32 || i == 34 || i == 36 || i == 38 ||
-                 i == 52 || i == 60 || i == 66 || i == 74)) {
+                 i == 52 || i == 60 || i == 66 || i == 74 ||
+                 i == 20 || i == 26 || i == 205)) {
                 pending_capture_ =
                     screenshot_path_ + "." + std::to_string(i) + ".bmp";
             }
@@ -268,11 +289,46 @@ void Game::run() {
                 }
                 if (nearest) nearest->hit(Barrel::kMaxHealth);
             }
+            // For verification: pause near the end of the run (after every
+            // other capture) so the pause overlay lands in a screenshot.
+            if (screenshot_mode_ && i == 200) paused_ = true;
+            // For verification: force a yellow demon (the every-5th-wave
+            // mini-boss) next to the player at frame 12 so its palette and
+            // ranged attack can be captured without waiting for wave 5.
+            if (screenshot_mode_ && i == 12 && player_) {
+                auto d = std::make_unique<Enemy>(
+                    EnemyKind::YellowDemon, player_->pos.x - 150.0f,
+                    player_->pos.y - 90.0f);
+                d->add_animation("walk", devil_walk_sheet_.get(), 4, 40, 0.14f, true);
+                d->play_animation("walk");
+                entities_.push_back(std::move(d));
+            }
+            // For verification: force the level boss out at frame 6 so its
+            // floating name and the Dark Souls health bar can be captured.
+            if (screenshot_mode_ && i == 6) {
+                GameContext sctx;
+                sctx.world_w = world_w_;
+                sctx.world_h = world_h_;
+                sctx.tilemap = &tilemap_;
+                sctx.obstacles = &obstacles_;
+                spawn_boss(sctx);
+            }
             // For screenshot verification: force a scene transition at frame
             // 100 so the fade + map swap + banner can be captured (the real
             // game triggers this every 15 waves automatically).
             if (screenshot_mode_ && i == 100) {
-                begin_level_transition((level_ + 1) % kLevelCount);
+                // Move the wave counter with the scene: level_for_wave() drives
+                // the transition every frame, so forcing a swap without also
+                // advancing the wave leaves the gate disagreeing and the world
+                // ping-ponging between the two scenes.
+                const int next = (level_ + 1) % kLevelCount;
+                GameContext sctx;
+                sctx.world_w = world_w_;
+                sctx.world_h = world_h_;
+                sctx.tilemap = &tilemap_;
+                sctx.obstacles = &obstacles_;
+                begin_wave(next * kWavesPerLevel + 1, sctx);
+                begin_level_transition(next);
             }
         }
         if (screenshot_mode_) {
@@ -288,7 +344,12 @@ void Game::run() {
             // prove the animator ticked (robust even if all enemies die late).
             std::cerr << " enemy_frame=" << max_enemy_anim_frame_
                       << " barrels=" << barrels_exploded_
-                      << " blast_kills=" << blast_kills_ << '\n';
+                      << " blast_kills=" << blast_kills_
+                      << " demons=" << demons_spawned_
+                      << " bosses=" << bosses_spawned_
+                      << " wave_gate="
+                      << (wave_gate_violations_ == 0 ? "OK" : "LEAKED")
+                      << '\n';
         }
         return;
     }
@@ -368,7 +429,8 @@ void Game::process_input(bool& running) {
                 }
                 if (event.type == SDL_EVENT_KEY_DOWN) {
                     const SDL_Keycode k = event.key.key;
-                    if (k == SDLK_1) player_->switch_to(WeaponKind::Pistol);
+                    if (k == SDLK_P) paused_ = !paused_;
+                    else if (k == SDLK_1) player_->switch_to(WeaponKind::Pistol);
                     else if (k == SDLK_2) player_->switch_to(WeaponKind::Shotgun);
                     else if (k == SDLK_3) player_->switch_to(WeaponKind::MachineGun);
                     else if (k == SDLK_Q) player_->cycle(-1);
@@ -472,6 +534,7 @@ void Game::on_options_select(int index) {
 
 void Game::return_to_menu() {
     state_ = GameState::MainMenu;
+    paused_ = false;
     menu_.set_items(kMainMenuItems);
     menu_.reset();
 }
@@ -564,6 +627,7 @@ void Game::update_player_aim(const GameContext& ctx) {
 
 void Game::update(float dt) {
     if (state_ != GameState::Playing) return;
+    if (paused_) return;  // frozen: no movement, spawning, firing or timers
 
     GameContext ctx;
     ctx.keys = SDL_GetKeyboardState(nullptr);
@@ -605,30 +669,52 @@ void Game::update(float dt) {
     }
     if (banner_timer_ > 0.0f) banner_timer_ = std::max(0.0f, banner_timer_ - dt);
 
-    // Advance waves: each wave raises the spawn rate (shorter interval).
-    wave_timer_ += dt;
-    if (wave_timer_ >= wave_duration_) {
-        wave_timer_ = 0.0f;
-        ++wave_;
-        // Every kWavesPerLevel waves, transition to the next map/scene.
-        const int new_level = level_for_wave(wave_);
-        if (new_level != level_ && !transitioning) {
-            begin_level_transition(new_level);
-        }
+    // Move to the next scene once the wave count says so. The wave gate below
+    // already guarantees a boss is dead before its wave ends, so this can only
+    // fire on a clear field; the boss check stays as a guard so a future change
+    // to wave pacing cannot resurrect the "map swap deletes the boss" bug.
+    const int want_level = level_for_wave(wave_);
+    if (want_level != level_ && !transitioning && pending_level_ < 0 &&
+        !find_boss()) {
+        begin_level_transition(want_level);
     }
 
-    // Spawn enemies on a timer (rate scales with wave + difficulty).
-    const float spawn_interval =
-        std::max(0.35f, (kSpawnInterval -
-                         0.08f * static_cast<float>(wave_ - 1)) *
-                        difficulty_factor());
-    spawn_timer_ += dt;
-    if (spawn_timer_ >= spawn_interval && !transitioning) {
-        spawn_timer_ = 0.0f;
-        size_t enemy_count = 0;
-        for (const auto& e : entities_)
-            if (dynamic_cast<Enemy*>(e.get())) ++enemy_count;
-        if (enemy_count < kMaxEnemies) spawn_enemy(ctx);
+    // --- Wave lifecycle ----------------------------------------------------
+    // A wave is *cleared*, not timed: it spawns a fixed roster, and the next
+    // wave only begins once every enemy from it is dead. Nothing spawns during
+    // a scene transition.
+    if (wave_banner_timer_ > 0.0f) {
+        wave_banner_timer_ = std::max(0.0f, wave_banner_timer_ - dt);
+    }
+    if (!transitioning) {
+        if (wave_break_timer_ > 0.0f) {
+            // Breather after a clear, then the next wave rolls in.
+            wave_break_timer_ -= dt;
+            if (wave_break_timer_ <= 0.0f) {
+                wave_break_timer_ = 0.0f;
+                begin_wave(wave_ + 1, ctx);
+            }
+        } else if (wave_spawns_left_ > 0) {
+            // Still feeding this wave's roster onto the field. The rate scales
+            // with the wave number and difficulty, and respects the concurrent
+            // enemy cap.
+            const float spawn_interval =
+                std::max(0.35f, (kSpawnInterval -
+                                 0.08f * static_cast<float>(wave_ - 1)) *
+                                difficulty_factor());
+            spawn_timer_ += dt;
+            if (spawn_timer_ >= spawn_interval) {
+                spawn_timer_ = 0.0f;
+                if (living_enemies() < static_cast<int>(kMaxEnemies)) {
+                    spawn_enemy(ctx);
+                    --wave_spawns_left_;
+                }
+            }
+        } else if (living_enemies() == 0) {
+            // Roster exhausted and the field is clear: the wave is over.
+            show_toast("Wave " + std::to_string(wave_) + " cleared");
+            wave_break_timer_ = kWaveBreak;
+        }
     }
 
     fire_projectile(dt, ctx);
@@ -639,7 +725,7 @@ void Game::update(float dt) {
     }
 
     // Devils within line of sight fire fireballs at the player.
-    update_devil_ranged_attacks(dt, ctx);
+    update_enemy_ranged_attacks(dt, ctx);
 
     // Barrels whose fuse burned out this frame blow up (and may light other
     // barrels, which detonate on their own fuse a moment later).
@@ -698,15 +784,15 @@ void Game::update(float dt) {
     if (game_over_) state_ = GameState::GameOver;
 }
 
-void Game::spawn_enemy(const GameContext& ctx) {
+void Game::pick_spawn_point(const GameContext& ctx, float& out_x,
+                            float& out_y) {
     // Spawn just inside the wall border (the border tiles are solid, so an
     // enemy spawning at the true edge would be trapped inside the wall and
     // pile up stuck). On a large world, spawn near the current camera view
     // edges (not the far world edges) so enemies approach the player from the
     // sides of the visible play area, Boxhead-style.
-    const float wall = 32.0f;       // wall border thickness (one tile)
-    const float margin = wall + 16.0f;  // spawn band just inside the wall (body clears the border)
-    // Camera view bounds in world space.
+    const float wall = 32.0f;           // wall border thickness (one tile)
+    const float margin = wall + 16.0f;  // spawn band just inside the wall
     const float vx0 = camera_.x;
     const float vy0 = camera_.y;
     const float vx1 = camera_.x + static_cast<float>(kViewWidth);
@@ -714,8 +800,6 @@ void Game::spawn_enemy(const GameContext& ctx) {
     float x = 0.0f;
     float y = 0.0f;
     const int edge = std::rand() % 4;
-    // Spawn along a chosen edge of the camera view, clamped inside the world
-    // and clear of the wall border.
     const auto lo = [&](float v, float lo0) { return std::max(lo0, v); };
     const auto hi = [&](float v, float hi0) { return std::min(hi0, v); };
     const float mx_lo = margin;
@@ -749,17 +833,99 @@ void Game::spawn_enemy(const GameContext& ctx) {
         // landed on a wall tile or a barrel: loop and try a different
         // position along the same edge.
     }
-    // Pick the enemy kind: zombies always; the tougher red Devil appears
-    // from wave 2 onward (25% chance) as a special enemy.
-    const EnemyKind kind =
-        (wave_ >= 2 && (std::rand() % 4 == 0)) ? EnemyKind::Devil
-                                              : EnemyKind::Zombie;
+    out_x = x;
+    out_y = y;
+}
+
+void Game::spawn_enemy(const GameContext& ctx) {
+    float x = 0.0f;
+    float y = 0.0f;
+    pick_spawn_point(ctx, x, y);
+
+    // Pick the enemy kind. Zombies are the default; the tougher red Devil
+    // appears from wave 2 onward (25% chance). On every kDemonWaveInterval-th
+    // wave each spawn additionally rolls a 1-in-kDemonOdds chance of being a
+    // yellow demon, the faster fireball-slinging mini-boss.
+    EnemyKind kind = EnemyKind::Zombie;
+    if (wave_ % kDemonWaveInterval == 0 && (std::rand() % kDemonOdds) == 0) {
+        kind = EnemyKind::YellowDemon;
+        ++demons_spawned_;
+    } else if (wave_ >= 2 && (std::rand() % 4) == 0) {
+        kind = EnemyKind::Devil;
+    }
     auto e = std::make_unique<Enemy>(kind, x, y);
-    const Texture* sheet = (kind == EnemyKind::Devil) ? devil_walk_sheet_.get()
-                                                       : zombie_walk_sheet_.get();
+    const Texture* sheet = (kind == EnemyKind::Zombie) ? zombie_walk_sheet_.get()
+                                                       : devil_walk_sheet_.get();
     e->add_animation("walk", const_cast<Texture*>(sheet), 4, 40, 0.14f, true);
     e->play_animation("walk");
     entities_.push_back(std::move(e));
+}
+
+const char* Game::boss_name(int level) {
+    // One named boss per scene, cycling with the levels.
+    static const char* kNames[] = {
+        "Grimthar, Warden of the Courtyard",
+        "Malkyra, Matron of the Asylum",
+        "Ghulmaw, the Sunken Glutton",
+        "Vaskel, Keeper of Bones",
+        "Ashmodai, the Gate Unbarred",
+    };
+    const int n = static_cast<int>(sizeof(kNames) / sizeof(kNames[0]));
+    return kNames[((level % n) + n) % n];
+}
+
+Enemy* Game::find_boss() const {
+    for (const auto& e : entities_) {
+        auto* en = dynamic_cast<Enemy*>(e.get());
+        if (en && en->alive && en->is_boss()) return en;
+    }
+    return nullptr;
+}
+
+void Game::spawn_boss(const GameContext& ctx) {
+    if (find_boss()) return;  // one boss at a time
+    float x = 0.0f;
+    float y = 0.0f;
+    pick_spawn_point(ctx, x, y);
+    auto boss = std::make_unique<Enemy>(EnemyKind::Boss, x, y);
+    boss->set_name(boss_name(level_));
+    boss->add_animation("walk", devil_walk_sheet_.get(), 4, 40, 0.18f, true);
+    boss->play_animation("walk");
+    show_toast(std::string(boss->name()) + " awakens");
+    entities_.push_back(std::move(boss));
+    ++bosses_spawned_;
+}
+
+int Game::enemies_for_wave(int wave) {
+    const int n = kWaveBaseEnemies + kWaveEnemyStep * (wave - 1);
+    return std::min(kWaveEnemyCap, std::max(1, n));
+}
+
+int Game::living_enemies() const {
+    int n = 0;
+    for (const auto& e : entities_) {
+        const auto* en = dynamic_cast<const Enemy*>(e.get());
+        if (en && en->alive) ++n;
+    }
+    return n;
+}
+
+int Game::wave_enemies_left() const {
+    return wave_spawns_left_ + living_enemies();
+}
+
+void Game::begin_wave(int wave, const GameContext& ctx) {
+    // The field must be clear before a wave starts; anything else means the
+    // clear-gate leaked.
+    if (living_enemies() != 0) ++wave_gate_violations_;
+    wave_ = wave;
+    wave_spawns_left_ = enemies_for_wave(wave_);
+    spawn_timer_ = 0.0f;
+    wave_banner_timer_ = 1.8f;
+    // The last wave of every scene is a boss wave. The boss is extra to the
+    // roster, and because the wave cannot end until the field is clear, it
+    // must be killed before the next wave (and the next scene) arrives.
+    if (wave_ % kWavesPerLevel == 0) spawn_boss(ctx);
 }
 
 void Game::fire_projectile(float dt, const GameContext& ctx) {
@@ -976,7 +1142,9 @@ void Game::render() {
     // Draw the scene tileset (LevelEdit++ ".mx"). On load failure the floor
     // stays the solid fallback color above. Offset by the camera so a world
     // larger than the viewport scrolls.
-    if (tilemap_.loaded()) tilemap_.render(renderer_, camera_.x, camera_.y);
+    if (tilemap_.loaded()) {
+        tilemap_.render(renderer_, camera_.x, camera_.y, ww, wh);
+    }
 
     if (state_ == GameState::MainMenu) {
         menu_.render(font_, "BOXDEAD", ww, wh);
@@ -1016,9 +1184,32 @@ void Game::render() {
     });
     for (const auto* e : order) e->render(renderer_, camera_.x, camera_.y);
 
+    // The boss carries its name over its head, in world space.
+    if (const Enemy* boss = find_boss()) {
+        if (!boss->name().empty()) {
+            const float tw = static_cast<float>(font_.text_width(boss->name()));
+            // Centred over the boss, but kept inside the viewport so the name
+            // stays readable when it is fighting at the edge of the screen.
+            const float nx = std::clamp(boss->pos.x - camera_.x - tw * 0.5f,
+                                        8.0f, ww - tw - 8.0f);
+            font_.draw(boss->name(), nx,
+                       boss->pos.y - camera_.y - boss->size.y * 1.15f - 26.0f,
+                       SDL_Color{236, 214, 160, 255});
+        }
+    }
+
     if (flashing) player_->set_color_override(SDL_Color{255, 255, 255, 255});
 
     render_hud();
+
+    // Wave announcement, just under the level banner slot.
+    if (wave_banner_timer_ > 0.0f) {
+        const std::string label = "WAVE " + std::to_string(wave_);
+        const float tw = static_cast<float>(font_.text_width(label));
+        const float alpha = std::min(1.0f, wave_banner_timer_ * 2.0f) * 255.0f;
+        font_.draw(label, (ww - tw) * 0.5f, wh * 0.30f,
+                   SDL_Color{235, 225, 200, static_cast<Uint8>(alpha)});
+    }
 
     // Level banner (shown briefly after entering a scene).
     if (banner_timer_ > 0.0f) {
@@ -1031,6 +1222,23 @@ void Game::render() {
             std::min(1.0f, banner_timer_ * 1.5f) * 255.0f;  // fades out at the end
         font_.draw(label, x, y,
                    SDL_Color{235, 235, 235, static_cast<Uint8>(alpha)});
+    }
+
+    // Pause overlay, over the world and the HUD.
+    if (paused_) {
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        // Light enough that the frozen scene still reads behind it.
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 105);
+        SDL_RenderFillRect(renderer_, nullptr);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+        const std::string t1 = "PAUSED";
+        const std::string t2 = "P to resume  -  Esc for menu";
+        const float w1 = static_cast<float>(font_.text_width(t1));
+        const float w2 = static_cast<float>(font_.text_width(t2));
+        font_.draw(t1, (ww - w1) * 0.5f, wh * 0.44f,
+                   SDL_Color{245, 235, 210, 255});
+        font_.draw(t2, (ww - w2) * 0.5f, wh * 0.52f,
+                   SDL_Color{190, 185, 175, 255});
     }
 
     // Level-transition fade overlay (covers everything during the swap).
@@ -1080,6 +1288,15 @@ void Game::render_hud() {
     // Score + wave, top-right.
     font_.draw("Kills: " + std::to_string(score_), 980.0f, 16.0f);
     font_.draw("Wave: " + std::to_string(wave_), 980.0f, 40.0f);
+    // Waves end on a clear, so show what is still owed: unspawned roster plus
+    // everything still breathing. Without this the pause between waves reads
+    // as the game having stopped spawning.
+    if (wave_break_timer_ > 0.0f) {
+        font_.draw("Cleared!", 1120.0f, 40.0f, SDL_Color{255, 220, 60, 255});
+    } else {
+        font_.draw("Left: " + std::to_string(wave_enemies_left()), 1120.0f,
+                   40.0f, SDL_Color{200, 200, 210, 255});
+    }
 
     // Inventory: one row per owned weapon slot. The selected weapon is
     // highlighted; empty (finite) weapons are dimmed. Keys 1/2/3 select,
@@ -1104,6 +1321,9 @@ void Game::render_hud() {
         font_.draw(label, 980.0f, iy, c);
         iy += 22.0f;
     }
+
+    // Boss name + health bar across the bottom (Dark Souls style).
+    render_boss_bar();
 
     // Pickup toast, centered near the top.
     if (pickup_toast_timer_ > 0.0f && !pickup_toast_.empty()) {
@@ -1138,14 +1358,20 @@ void Game::reset() {
     game_over_ = false;
     score_ = 0;
     wave_ = 1;
-    wave_timer_ = 0.0f;
+    wave_spawns_left_ = 0;
+    wave_break_timer_ = 0.0f;
+    wave_banner_timer_ = 0.0f;
     item_spawn_timer_ = 0.0f;
     pickups_collected_ = 0;
     max_enemy_anim_frame_ = -1;
     barrels_exploded_ = 0;
     blast_kills_ = 0;
+    demons_spawned_ = 0;
+    bosses_spawned_ = 0;
+    wave_gate_violations_ = 0;
     pickup_toast_timer_ = 0.0f;
     pickup_toast_.clear();
+    paused_ = false;
     state_ = GameState::Playing;
 
     // Load the scene first so the world size is known, then spawn the player
@@ -1166,6 +1392,14 @@ void Game::reset() {
     player_->set_style(character_style(selected_character_));
     entities_.push_back(std::move(player));
     update_camera();
+
+    // Roll wave 1 in through the same path every later wave uses.
+    GameContext ctx;
+    ctx.world_w = world_w_;
+    ctx.world_h = world_h_;
+    ctx.tilemap = &tilemap_;
+    ctx.obstacles = &obstacles_;
+    begin_wave(1, ctx);
 }
 
 const Game::Level& Game::current_level() const {
@@ -1240,41 +1474,97 @@ bool Game::line_of_solid_clear(float ax, float ay, float bx, float by) const {
     return true;
 }
 
-void Game::update_devil_ranged_attacks(float dt, const GameContext& ctx) {
+void Game::update_enemy_ranged_attacks(float dt, const GameContext& ctx) {
+    (void)ctx;
     if (!player_ || !player_->alive || transition_timer_ > 0.0f) return;
-    // Devils fire a fireball at the player when within direct line of sight at
-    // <= kDevilFireRange px, on a per-devil cooldown.
-    constexpr float kDevilFireRange = 50.0f;
-    constexpr float kDevilFireCooldown = 1.4f;
+    // Every kind that can shoot lobs fireballs at the player when it has a
+    // clear line of sight, using its own range / cadence / volley size: devils
+    // spit at point-blank, yellow demons snipe from range, and the boss fans a
+    // three-way spread.
     constexpr float kFireballSpeed = 260.0f;
     // Collect new fireballs and add them AFTER the loop: pushing into
     // entities_ while iterating it would invalidate iterators (UB/segfault).
     std::vector<std::unique_ptr<Entity>> spawned;
     for (auto& e : entities_) {
         auto* en = dynamic_cast<Enemy*>(e.get());
-        if (!en || !en->alive) continue;
-        if (en->kind() != EnemyKind::Devil) continue;
+        if (!en || !en->alive || !en->can_shoot()) continue;
         en->tick_ranged_cooldown(dt);
         if (en->ranged_cooldown() > 0.0f) continue;
         const float ddx = player_->pos.x - en->pos.x;
         const float ddy = player_->pos.y - en->pos.y;
         const float dist = std::sqrt(ddx * ddx + ddy * ddy);
-        if (dist <= 0.001f || dist > kDevilFireRange) continue;
-        // Direct sight line: nothing solid between the devil and the player.
+        if (dist <= 0.001f || dist > en->fire_range()) continue;
+        // Direct sight line: nothing solid between the shooter and the player.
         if (!line_of_solid_clear(en->pos.x, en->pos.y,
                                 player_->pos.x, player_->pos.y)) {
             continue;
         }
         const float nx = ddx / dist;
         const float ny = ddy / dist;
-        auto fb = std::make_unique<Projectile>(
-            en->pos.x, en->pos.y, nx * kFireballSpeed, ny * kFireballSpeed, 1);
-        fb->hostile = true;
-        fb->set_texture(fireball_tex_.get());
-        spawned.push_back(std::move(fb));
-        en->reset_ranged_cooldown(kDevilFireCooldown);
+        const int n = std::max(1, en->fire_count());
+        const float spread =
+            en->fire_spread_deg() * (static_cast<float>(M_PI) / 180.0f);
+        for (int i = 0; i < n; ++i) {
+            float angle = 0.0f;
+            if (n > 1) angle = -spread * 0.5f + spread * (i / (n - 1.0f));
+            const float ca = std::cos(angle);
+            const float sa = std::sin(angle);
+            const float dirx = nx * ca - ny * sa;
+            const float diry = nx * sa + ny * ca;
+            auto fb = std::make_unique<Projectile>(
+                en->pos.x, en->pos.y, dirx * kFireballSpeed,
+                diry * kFireballSpeed, 1);
+            fb->hostile = true;
+            fb->set_texture(fireball_tex_.get());
+            spawned.push_back(std::move(fb));
+        }
+        en->reset_ranged_cooldown(en->fire_interval());
     }
     for (auto& s : spawned) entities_.push_back(std::move(s));
+}
+
+void Game::render_boss_bar() {
+    const Enemy* boss = find_boss();
+    if (!boss) return;
+    // Dark Souls layout: a long, thin bar low on the screen with the boss's
+    // name centred just above it.
+    const float ww = static_cast<float>(kViewWidth);
+    constexpr float bar_w = 620.0f;
+    constexpr float bar_h = 15.0f;
+    const float bar_x = (ww - bar_w) * 0.5f;
+    constexpr float bar_y = 646.0f;
+
+    const std::string& name = boss->name();
+    if (!name.empty()) {
+        const float tw = static_cast<float>(font_.text_width(name));
+        font_.draw(name, (ww - tw) * 0.5f, bar_y - 30.0f,
+                   SDL_Color{218, 206, 178, 255});
+    }
+
+    const float frac =
+        std::clamp(static_cast<float>(boss->health) /
+                       static_cast<float>(std::max(1, boss->max_health())),
+                   0.0f, 1.0f);
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    // Outer frame, then the dark trough, then the blood-red fill.
+    SDL_SetRenderDrawColor(renderer_, 24, 20, 18, 220);
+    SDL_FRect frame{bar_x - 3.0f, bar_y - 3.0f, bar_w + 6.0f, bar_h + 6.0f};
+    SDL_RenderFillRect(renderer_, &frame);
+    SDL_SetRenderDrawColor(renderer_, 52, 44, 38, 255);
+    SDL_FRect trough{bar_x, bar_y, bar_w, bar_h};
+    SDL_RenderFillRect(renderer_, &trough);
+    SDL_SetRenderDrawColor(renderer_, 148, 26, 26, 255);
+    SDL_FRect fill{bar_x, bar_y, bar_w * frac, bar_h};
+    SDL_RenderFillRect(renderer_, &fill);
+    // Highlight along the top of the fill so it reads as lit, not flat.
+    SDL_SetRenderDrawColor(renderer_, 196, 60, 48, 255);
+    SDL_FRect gloss{bar_x, bar_y, bar_w * frac, 4.0f};
+    SDL_RenderFillRect(renderer_, &gloss);
+    // Thin gold rule around the trough.
+    SDL_SetRenderDrawColor(renderer_, 120, 104, 74, 255);
+    SDL_RenderRect(renderer_, &trough);
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
 }
 
 void Game::spawn_barrels_from_map() {

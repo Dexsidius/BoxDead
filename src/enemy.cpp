@@ -1,7 +1,6 @@
 // BoxDead - Enemy implementation
 #include "boxdead/enemy.hpp"
 #include "boxdead/iso_sprite.hpp"
-#include "boxdead/tilemap.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -10,6 +9,38 @@
 namespace bd {
 
 namespace {
+
+// Per-kind stats, kept in one place so adding an enemy is a table entry plus a
+// palette rather than a scatter of conditionals.
+struct EnemyStats {
+    int health;
+    float speed;    // pixels per second
+    float size;     // collision box (the figure is drawn larger, see render)
+    float range;    // fireball range; 0 for melee-only kinds
+    float interval; // seconds between volleys
+    int count;      // fireballs per volley
+    float spread;   // degrees the volley fans across
+};
+
+constexpr float kBaseSpeed = 120.0f;
+
+EnemyStats stats_for(EnemyKind k) {
+    switch (k) {
+        // Point-blank spitter: same speed as a zombie, one extra hit to kill.
+        case EnemyKind::Devil:
+            return {2, kBaseSpeed, 36.0f, 50.0f, 1.4f, 1, 0.0f};
+        // Mini-boss: slightly quicker than the horde and a real ranged threat.
+        case EnemyKind::YellowDemon:
+            return {5, kBaseSpeed * 1.2f, 42.0f, 260.0f, 1.5f, 1, 0.0f};
+        // End-of-level boss: big, slow, heavy, fires a three-way spread.
+        case EnemyKind::Boss:
+            return {60, kBaseSpeed * 0.8f, 76.0f, 340.0f, 1.1f, 3, 26.0f};
+        case EnemyKind::Zombie:
+        default:
+            return {1, kBaseSpeed, 36.0f, 0.0f, 0.0f, 0, 0.0f};
+    }
+}
+
 // Boxhead zombie: sickly green skin, black hair, bloodied white office shirt
 // with a red tie, dark slacks.
 IsoCharStyle zombie_style() {
@@ -37,15 +68,59 @@ IsoCharStyle devil_style() {
     s.eye = SDL_Color{252, 214, 96, 255};  // glowing eyes
     return s;
 }
+
+// Yellow demon: brass-gold hide with dark horns and burning red eyes, so it
+// stands out against both the green horde and the red devils.
+IsoCharStyle yellow_demon_style() {
+    IsoCharStyle s;
+    s.skin = SDL_Color{240, 200, 56, 255};
+    s.hair = SDL_Color{0, 0, 0, 0};
+    s.shirt = SDL_Color{198, 152, 26, 255};
+    s.pants = SDL_Color{140, 104, 16, 255};
+    s.shoe = SDL_Color{72, 52, 10, 255};
+    s.horn = SDL_Color{58, 42, 16, 255};
+    s.eye = SDL_Color{226, 46, 30, 255};
+    return s;
+}
+
+// Boss: a hulking near-black demon with bone horns and burning amber eyes.
+IsoCharStyle boss_style() {
+    IsoCharStyle s;
+    s.skin = SDL_Color{132, 46, 52, 255};
+    s.hair = SDL_Color{0, 0, 0, 0};
+    s.shirt = SDL_Color{74, 24, 32, 255};
+    s.pants = SDL_Color{50, 18, 24, 255};
+    s.shoe = SDL_Color{28, 12, 16, 255};
+    s.horn = SDL_Color{218, 200, 168, 255};  // bone
+    s.eye = SDL_Color{255, 176, 40, 255};
+    return s;
+}
+
+IsoCharStyle style_for(EnemyKind k) {
+    switch (k) {
+        case EnemyKind::Devil: return devil_style();
+        case EnemyKind::YellowDemon: return yellow_demon_style();
+        case EnemyKind::Boss: return boss_style();
+        case EnemyKind::Zombie:
+        default: return zombie_style();
+    }
+}
+
 }  // namespace
 
 Enemy::Enemy(EnemyKind kind, float x, float y)
-    : AnimatedEntity(x, y, 36.0f, 36.0f), kind_(kind), speed_(120.0f) {
-    // The Devil inherits the zombie's behavior but is a tougher "special"
-    // enemy (2 HP instead of 1). Same speed and chase AI.
-    health = (kind_ == EnemyKind::Devil) ? 2 : 1;
-    sprite_.color = SDL_Color{255, 255, 255, 255};  // no tint (texture carries color)
+    : AnimatedEntity(x, y, stats_for(kind).size, stats_for(kind).size),
+      kind_(kind),
+      speed_(stats_for(kind).speed),
+      max_health_(stats_for(kind).health) {
+    health = max_health_;
+    sprite_.color = SDL_Color{255, 255, 255, 255};  // no tint
 }
+
+float Enemy::fire_range() const { return stats_for(kind_).range; }
+float Enemy::fire_interval() const { return stats_for(kind_).interval; }
+int Enemy::fire_count() const { return stats_for(kind_).count; }
+float Enemy::fire_spread_deg() const { return stats_for(kind_).spread; }
 
 void Enemy::update(float dt, const GameContext& ctx) {
     Vec2 d{ctx.player_pos.x - pos.x, ctx.player_pos.y - pos.y};
@@ -61,15 +136,15 @@ void Enemy::update(float dt, const GameContext& ctx) {
         facing_ = d;  // face the player
     }
 
-    // Enemies are always chasing, so the walk cycle runs continuously.
-    walk_phase_ += dt * 8.0f;
+    // Enemies are always chasing, so the walk cycle runs continuously. Big
+    // bosses take longer strides, so their cycle runs slower.
+    walk_phase_ += dt * (is_boss() ? 5.0f : 8.0f);
     play_animation("walk");
     update_animator(dt);
 }
 
 void Enemy::render(SDL_Renderer* r, float cam_x, float cam_y) const {
-    IsoCharStyle style =
-        (kind_ == EnemyKind::Devil) ? devil_style() : zombie_style();
+    IsoCharStyle style = style_for(kind_);
     style.tint = sprite_.color;  // flashes when the Game tints a hit enemy
     // Same as the player: the figure is drawn bigger than its hitbox so the
     // characters read at Boxhead scale without making the horde unfair.

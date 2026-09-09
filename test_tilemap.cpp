@@ -28,6 +28,7 @@ int main() {
         "assets/maps/Sewers/Sewers.mx",
         "assets/maps/Graveyard/Graveyard.mx",
         "assets/maps/Hells Gate/Hells Gate.mx",
+        "assets/maps/The Sprawl/The Sprawl.mx",
     };
 
     int failures = 0;
@@ -54,6 +55,6 @@ int main() {
         std::printf("tilemap load test: %d FAILURES\n", failures);
         return 1;
     }
-    std::printf("tilemap load test: all 5 maps OK\n");
+    std::printf("tilemap load test: all 6 maps OK\n");
     return 0;
 }

@@ -40,8 +40,12 @@ enum class GameState { MainMenu, CharacterSelect, Options, Playing, GameOver };
 
 class Game {
 public:
+    // `smoke_frames` overrides the length of a --smoke-test run (0 = default).
+    // Waves are cleared rather than timed, so reaching the boss wave takes a
+    // few thousand frames; short runs only cover the first couple of waves.
     explicit Game(bool smoke_test = false, std::string screenshot_path = "",
-                 bool menu_shot = false);
+                 bool menu_shot = false, int smoke_frames = 0,
+                 int start_level = 0);
     ~Game();
 
     Game(const Game&) = delete;
@@ -63,6 +67,25 @@ private:
 
     // Gameplay systems.
     void spawn_enemy(const GameContext& ctx);
+    // Pick a spawn position along the current view edge that is clear of walls
+    // and barrels. Shared by the horde and the boss.
+    void pick_spawn_point(const GameContext& ctx, float& out_x, float& out_y);
+
+    // --- Bosses ------------------------------------------------------------
+    // Every 5th wave, each spawn has a 1-in-kDemonOdds chance of being a
+    // yellow demon instead of an ordinary enemy.
+    static const int kDemonWaveInterval = 5;
+    static const int kDemonOdds = 5;
+    // The end-of-level boss spawns on every kWavesPerLevel-th wave and holds
+    // the scene transition until it is dead.
+    void spawn_boss(const GameContext& ctx);
+    // The living boss, or nullptr. Scanned rather than cached so there is no
+    // pointer to dangle when the boss dies and is reaped.
+    Enemy* find_boss() const;
+    // Unique boss name for a scene (cycles with the levels).
+    static const char* boss_name(int level);
+    // Dark-Souls-style name + health bar across the bottom of the screen.
+    void render_boss_bar();
     void fire_projectile(float dt, const GameContext& ctx);
     void capture_screenshot();
     void capture_screenshot_to(const std::string& path);
@@ -99,7 +122,8 @@ private:
     };
     static const Level kLevels[];
     static const int kLevelCount;
-    static const int kWavesPerLevel = 15;
+    // Waves per scene. The last wave of each block is the boss wave.
+    static const int kWavesPerLevel = 13;
     static constexpr float kTransitionDur = 1.2f;  // seconds (fade out + in)
     int level_ = 0;
     float transition_timer_ = 0.0f;   // >0 while a level transition is playing
@@ -127,15 +151,35 @@ private:
     // Picks the pickup texture for a given weapon kind.
     Texture* weapon_pickup_tex(WeaponKind k);
 
+    // Paused with P during play: the world stops updating and a dim overlay
+    // goes up, but the scene stays drawn behind it.
+    bool paused_ = false;
+
     // Combat / i-frame state.
     float invuln_timer_ = 0.0f;
     bool game_over_ = false;
 
     // Score + progression.
     int score_ = 0;
+    // Waves are cleared, not timed: a wave spawns a fixed roster and the next
+    // one does not begin until every enemy from it is dead.
     int wave_ = 1;
-    float wave_timer_ = 0.0f;
-    float wave_duration_ = 15.0f;
+    int wave_spawns_left_ = 0;    // still to spawn from this wave's roster
+    float wave_break_timer_ = 0.0f;   // breather between a clear and the next wave
+    float wave_banner_timer_ = 0.0f;  // "WAVE N" announcement
+    static constexpr float kWaveBreak = 2.5f;   // seconds between waves
+    static constexpr int kWaveBaseEnemies = 5;  // roster size on wave 1
+    static constexpr int kWaveEnemyStep = 2;    // added per wave
+    static constexpr int kWaveEnemyCap = 40;    // roster ceiling
+    // Roster size for a wave (the boss on a boss wave is extra).
+    static int enemies_for_wave(int wave);
+    // Start `wave`: set the roster, announce it, spawn the boss if it is a
+    // boss wave.
+    void begin_wave(int wave, const GameContext& ctx);
+    // Enemies currently on the field.
+    int living_enemies() const;
+    // Enemies from this wave still to come (unspawned + alive).
+    int wave_enemies_left() const;
     int difficulty_ = 1;  // 0 Easy, 1 Normal, 2 Hard
     AimMode aim_mode_ = AimMode::FaceMouse;  // FaceMouse or FaceMovement
     // Selected character skin (0=Blue, 1=Green, 2=Red). Chosen on the
@@ -154,6 +198,12 @@ private:
     int max_enemy_anim_frame_ = -1;  // highest enemy anim frame seen this run
     int barrels_exploded_ = 0;       // barrels detonated this run (smoke metric)
     int blast_kills_ = 0;            // enemies killed by explosions (smoke metric)
+    int demons_spawned_ = 0;         // yellow demons spawned (smoke metric)
+    int bosses_spawned_ = 0;         // level bosses spawned (smoke metric)
+    // Times a wave began while enemies from the previous one were still alive.
+    // Must stay 0: that is the whole point of clearing waves rather than
+    // timing them, so the smoke summary reports it as a regression check.
+    int wave_gate_violations_ = 0;
     std::string pickup_toast_;
     float pickup_toast_timer_ = 0.0f;
 
@@ -187,13 +237,18 @@ private:
     void update_camera();  // follow the player, clamp to world bounds
     // True if no solid tile blocks the line from `a` to `b` (devil sight line).
     bool line_of_solid_clear(float ax, float ay, float bx, float by) const;
-    // Devils within range + line of sight fire a fireball at the player.
-    void update_devil_ranged_attacks(float dt, const GameContext& ctx);
+    // Every shooting kind (devil, yellow demon, boss) fires at the player
+    // when in range with a clear line of sight.
+    void update_enemy_ranged_attacks(float dt, const GameContext& ctx);
     std::vector<std::unique_ptr<Entity>> entities_;
     Player* player_ = nullptr;
     float spawn_timer_ = 0.0f;
     float fire_cooldown_ = 0.0f;
     bool smoke_test_;
+    int smoke_frames_ = 0;
+    // Scene the headless/screenshot modes open on (--level N), so each theme
+    // can be captured without playing through the wave ladder to reach it.
+    int start_level_ = 0;
     bool screenshot_mode_ = false;
     bool menu_shot_ = false;
     std::string screenshot_path_;

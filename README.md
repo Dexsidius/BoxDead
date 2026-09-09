@@ -153,6 +153,7 @@ to use real BMP assets (add SDL_image for PNG/JPG).
 - **Q / E** - cycle to the previous / next owned weapon
 - **Up/Down** (or W/S) + **Enter** - navigate menus; mouse hover/click works too
 - **Esc** - back / quit (context-dependent)
+- **P** - pause / resume (the world freezes; Esc still exits to the menu)
 - **R** - restart after GAME OVER
 
 Projectiles fire toward the aim direction using the player's current weapon
@@ -193,6 +194,11 @@ isometric renderer (see "Boxhead-style characters" above):
 
 - **Zombie** — the general enemy. Pale green skin, dark hair, white shirt with a
   red tie and blood splatter. 1 HP, speed 120 px/s. Spawns every wave.
+- **Yellow Demon** — the mini-boss. Appears on **every 5th wave**: while a wave
+  number is a multiple of 5, each spawn has a **1-in-5 chance** of being a
+  demon instead of an ordinary enemy. 5 HP, 20% faster than the horde
+  (144 px/s vs 120), and it shoots fireballs from up to 260px — a real ranged
+  threat rather than the devil's point-blank spit.
 - **Red Devil** — the special enemy. Red skin, dark red body, two horns.
   Inherits the zombie's behavior (same speed and chase AI) but is tougher at
   2 HP. Starts appearing from wave 2 onward (25% chance per spawn). **Devils
@@ -235,6 +241,9 @@ shading itself, so adding a character is a handful of colors:
 - **Zombie** - sickly green skin, black hair, a bloodied white office shirt
   with a red tie, dark slacks, and a gaping mouth.
 - **Red Devil** - red hide, bald, two black horns, glowing yellow eyes.
+- **Yellow Demon** - brass-gold hide, dark horns, burning red eyes.
+- **Boss** - a hulking dark-red demon with bone horns and amber eyes, drawn at
+  roughly twice the size of the horde.
 
 `style.tint` multiplies the whole palette, which is how the player flashes red
 during i-frames and how a barrel flashes white on its fuse.
@@ -282,17 +291,123 @@ Code: `include/boxdead/barrel.hpp` / `src/barrel.cpp` (the prop and its fuse),
 `Game::update_barrels()` / `Game::detonate()` in `src/game.cpp` (the blast
 sweep, which is the only thing that can see every entity).
 
+## Waves
+
+Waves are **cleared, not timed**. Each wave spawns a fixed roster and the next
+one does not begin until every enemy from it is dead — the game will not stack
+a new wave on top of the last one's leftovers.
+
+- Roster size is `5 + 2 x (wave - 1)`, capped at 40. Wave 1 is 5 enemies, wave
+  5 is 13, wave 13 is 29.
+- Enemies still feed in on the existing spawn timer (interval shrinks with the
+  wave number and difficulty) until the roster is exhausted, respecting the
+  50-enemy concurrent cap.
+- When the roster is spent and the field is clear, a "Wave N cleared" toast
+  fires, then a 2.5s breather, then the next wave rolls in with a `WAVE N`
+  banner.
+- The HUD shows `Left: N` — unspawned roster plus everything still breathing —
+  so the pause between waves reads as progress rather than as the game having
+  stopped spawning.
+- On a boss wave the boss is **extra** to the roster, so the wave cannot end
+  until the boss is dead. That is also what holds the scene transition.
+
+The invariant (a wave never starts while the previous one still has enemies on
+the field) is checked at runtime and reported by the smoke summary as
+`wave_gate=OK`.
+
+## Bosses
+
+Every scene ends with a named boss.
+
+- The boss spawns on the **last wave of each block** (wave 13, 26, 39, ...) and
+  is announced with a toast. It is extra to that wave's roster, so the wave —
+  and therefore the scene — cannot end until it is dead.
+- It carries a **unique name** per scene — Grimthar, Warden of the Courtyard;
+  Malkyra, Matron of the Asylum; Ghulmaw, the Sunken Glutton; Vaskel, Keeper of
+  Bones; Ashmodai, the Gate Unbarred — drawn floating above it in the world
+  (clamped to the viewport so it stays readable at the screen edge) and again
+  over a **Dark-Souls-style health bar** across the bottom of the screen.
+- It is big (76px hitbox, drawn at roughly twice the horde's size), slow
+  (96 px/s), has **60 HP**, and fires a **three-way fireball spread** from up to
+  340px away.
+- **The scene will not change while a boss is alive.** The transition is held
+  and starts the moment the boss dies, so a boss can never be deleted mid-fight
+  by the map swap.
+
+Boss stats live in one table (`stats_for` in `src/enemy.cpp`) alongside every
+other enemy kind, so retuning one is a line edit.
+
 ## Scenes / levels
 
-The game spans multiple maps. Every 15 waves the world transitions to the next
-scene: a fade-to-black, then the new map swaps in (floor palette + level name
+The game spans multiple maps. Every 13 waves the world transitions to the next
+scene (the 13th wave of each block is the boss wave, and since waves end only
+when the field is clear, the boss must be killed before the scene changes): a fade-to-black, then the new map swaps in (floor palette + level name
 banner), enemies and projectiles are cleared, and the player is recentered.
-Levels cycle (Courtyard -> Asylum -> Sewers -> Graveyard -> Hell's Gate) so
-play continues indefinitely with a changing backdrop.
+Levels cycle (Courtyard -> Asylum -> Sewers -> Graveyard -> Hell's Gate ->
+The Sprawl) so play continues indefinitely with a changing backdrop.
+
+The five themed scenes are 100x56 tiles (3200x1792 px); **The Sprawl** is a
+deliberate stress test at 103x64 tiles (3296x2048 px, ~7000 placements). 3280
+is not a multiple of the editor's 32px grid, so it rounds up to 3296.
+
+Large maps are only viable because the tilemap culls off-screen tiles before
+issuing draw calls and answers `is_solid()` from a uniform grid index rather
+than scanning every placement. Measured on the GPU renderer, 900 headless
+frames cost 1.37 ms/frame on a standard scene and 1.40 ms/frame on The Sprawl
+at wave 66 -- the extra 1000 tiles are essentially free.
 
 Each scene's floor, walls, and obstacles are rendered from a tileset authored in
 the [LevelEdit++](https://github.com/TheSardonicals/LevelEdit-Plus/tree/dexsidius-dev)
 level editor (the `dexsidius-dev` branch). See "Level design (tilesets)" below.
+
+## Scene art
+
+Every tile is generated from code by `tools/build_levels.py` -- there is no
+source artwork, no tracing and no recolouring of anyone else's assets, so the
+output carries no licence beyond this repository's own and can be handed to
+anyone along with the game.
+
+- **Floors and walls** must tile seamlessly, so each generator works on a
+  torus: value noise is sampled with wrapped coordinates, and cobblestone is a
+  Voronoi diagram using toroidal distance, which means a stone crossing the
+  right edge reappears on the left. Three floor styles (cobble, flagstone,
+  offset brick) are recoloured per scene.
+- **Props** (rocks, headstones, hedges, dead trees, mushrooms, barrels) are
+  drawn once from primitives -- irregular masses built from overlapping
+  ellipses, recursive branching for dead trees -- then composited onto that
+  scene's own floor tile and saved opaque. `SDL_LoadBMP` has no reliable alpha
+  path, and baking guarantees a prop sits on ground matching its scene.
+
+Each scene seeds its own RNG from its name, so regeneration is reproducible
+byte for byte. Regenerating needs nothing but Pillow:
+
+```bash
+python tools/build_levels.py
+```
+
+Scene palettes: Courtyard flagstone and hedges, Asylum pale cobble with rubble
+and fungal blooms, Sewers green-grey stone with algae, Graveyard violet cobble
+with headstones and dead trees, Hell's Gate red stone with obsidian, and The
+Sprawl in neutral grey.
+
+## Round-tripping with LevelEdit++
+
+The generated `.mx` files use the editor's own path convention
+(`exports/<Level>/assets/<Tile>.bmp`), so a scene folder can be opened in
+LevelEdit++ directly:
+
+```bash
+cp -r assets/maps/Courtyard <LevelEdit++>/exports/
+```
+
+then load the tileset named `Courtyard` in the editor. BoxDead resolves tile
+images by trying the literal path first and then the basename next to the `.mx`
+itself, so the same file works unmodified in both the editor and the game.
+
+Maps are generated rather than hand-placed -- at 100x56 and 103x64 tiles a
+scene runs to six or seven thousand placements, which is not something to click
+out by hand -- but the output is ordinary editor data and can be opened and
+edited tile by tile from there.
 
 ## Level design (tilesets)
 
@@ -367,20 +482,35 @@ and SDL3_ttf 3.2.2 and bundles the runtime DLLs, font, and scene tilesets.
 ## Smoke test (no display required)
 
 ```bash
-SDL_VIDEO_DRIVER=dummy ./build/BoxDead --smoke-test
+SDL_VIDEO_DRIVER=dummy ./build/BoxDead --smoke-test          # quick, ~900 frames
+SDL_VIDEO_DRIVER=dummy ./build/BoxDead --smoke-test 20000    # soak run
+SDL_VIDEO_DRIVER=dummy ./build/BoxDead --smoke-test --level 5  # open on a scene
 ```
+
+`--level N` opens the headless and screenshot modes on scene N (and starts on a
+wave that belongs to it, since the scene transition is driven by the wave
+number). Handy for capturing one theme without playing up to it.
+
+Because waves end on a clear rather than a timer, the default run only covers
+the first couple of waves. Pass a frame count to soak: 20000 frames marches to
+about wave 20, through two yellow-demon waves and the wave-13 boss (~2 minutes,
+since the tilemap draws every tile without culling).
 
 Runs a ~15-second headless scenario (auto-firing at enemies, forcing item
 spawns on the player) and prints a summary line — useful for CI or headless
 environments. The summary includes `enemy_frame` (a live enemy's current animation frame,
 proving the animator ticks), `barrels` (how many barrels detonated), and
-`blast_kills` (enemies killed by explosions rather than bullets), so a run
-that reports `barrels=0` means the level's explosive tiles never loaded.
+`blast_kills` (enemies killed by explosions rather than bullets), `demons`
+(yellow demons spawned on the 5th-wave rolls) and `bosses` (level bosses
+spawned) and `wave_gate` (`OK`, or `LEAKED` if a wave ever began with enemies
+still alive). A run reporting `barrels=0` means the level's explosive tiles
+never loaded; `bosses=0` means the run was too short to reach a boss wave.
 
 The screenshot harness (`--screenshot <path>`) is the visual counterpart: it
-runs 220 frames against a real renderer, forces a devil into fireball range at
-frame 30, shoots out the barrel nearest the player at frame 45, and swaps
-scenes at frame 100, dumping BMPs around each event. There are also pure unit tests:
+runs 220 frames against a real renderer, forces the level boss out at frame 6,
+a yellow demon at frame 12, a devil into fireball range at frame 30, shoots out
+the barrel nearest the player at frame 45, and swaps scenes at frame 100,
+dumping BMPs around each event. There are also pure unit tests:
 
 ```bash
 # Animator: frame advance + looping.
