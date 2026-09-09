@@ -32,6 +32,12 @@ public:
     void draw(const std::string& text, float x, float y,
               SDL_Color color = SDL_Color{255, 255, 255, 255});
 
+    // Drop the cached text textures and close the font. Must be called while
+    // the renderer and SDL_ttf are still alive — the destructor alone is too
+    // late, because a Font member outlives the Game::shutdown() that tears
+    // those down. Safe to call more than once.
+    void release();
+
 private:
     SDL_Renderer* renderer_ = nullptr;
     TTF_Font* font_ = nullptr;

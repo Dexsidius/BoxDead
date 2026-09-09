@@ -1,5 +1,6 @@
 #pragma once
 
+#include "boxdead/barrel.hpp"
 #include "boxdead/entity.hpp"
 #include "boxdead/enemy.hpp"
 #include "boxdead/font.hpp"
@@ -66,6 +67,22 @@ private:
     void capture_screenshot();
     void capture_screenshot_to(const std::string& path);
     void check_collisions();
+
+    // --- Explosive barrels -------------------------------------------------
+    // Barrels come from the level tileset (tiles named "Barrel"/"Explosive").
+    // They block movement, take bullet damage, and detonate on a short fuse.
+    void spawn_barrels_from_map();
+    // Refresh the dynamic-obstacle list handed to entities each frame so the
+    // player and enemies collide with living barrels.
+    void rebuild_obstacles();
+    // Detonate any barrel whose fuse burned out this frame.
+    void update_barrels();
+    // Apply one blast at `pos`: damages enemies and the player inside the
+    // radius, lights the fuse on other barrels (chain reaction), and spawns
+    // the fireball. Never called while iterating entities_.
+    void detonate(Vec2 pos);
+    std::vector<Obstacle> obstacles_;  // living barrels, rebuilt each frame
+
     void check_item_pickups();
     void maybe_drop_item(Vec2 pos);
     void spawn_floor_item(const GameContext& ctx);
@@ -135,6 +152,8 @@ private:
     int pickups_collected_ = 0;
     int smoke_frame_ = 0;
     int max_enemy_anim_frame_ = -1;  // highest enemy anim frame seen this run
+    int barrels_exploded_ = 0;       // barrels detonated this run (smoke metric)
+    int blast_kills_ = 0;            // enemies killed by explosions (smoke metric)
     std::string pickup_toast_;
     float pickup_toast_timer_ = 0.0f;
 

@@ -3,8 +3,17 @@
 
 namespace bd {
 
-Font::~Font() {
-    if (font_) TTF_CloseFont(font_);
+Font::~Font() { release(); }
+
+void Font::release() {
+    // Textures first: they must be destroyed before the renderer they came
+    // from, and the font before TTF_Quit().
+    cache_.clear();
+    if (font_) {
+        TTF_CloseFont(font_);
+        font_ = nullptr;
+    }
+    renderer_ = nullptr;
 }
 
 bool Font::load(SDL_Renderer* r, const std::string& path, int size) {

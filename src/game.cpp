@@ -3,6 +3,8 @@
 #define _USE_MATH_DEFINES
 #include "boxdead/game.hpp"
 
+#include "boxdead/barrel.hpp"
+#include "boxdead/explosion.hpp"
 #include "boxdead/item.hpp"
 #include "boxdead/sprite.hpp"
 
@@ -126,9 +128,12 @@ bool Game::init() {
     // assets/dejavu-sans.ttf is resolved relative to the executable. Try a
     // few candidate locations so it works from the build dir and a deployed
     // layout next to the executable.
+    // SDL3's SDL_GetBasePath() returns a string SDL owns and frees itself in
+    // SDL_Quit() — do NOT SDL_free() it here (SDL2's version did transfer
+    // ownership; freeing it under SDL3 is a double free that corrupts the
+    // heap and crashes on exit).
     const char* base = SDL_GetBasePath();
     const std::string base_dir = base ? std::string(base) : std::string("");
-    if (base) SDL_free(const_cast<char*>(base));
     const std::vector<std::string> font_candidates = {
         base_dir + "assets/dejavu-sans.ttf",
         base_dir + "../assets/dejavu-sans.ttf",
@@ -227,7 +232,8 @@ void Game::run() {
             // buffer right before SDL_RenderPresent.
             if (screenshot_mode_ &&
                 (i == 90 || i == 110 || i == 160 || i == 185 ||
-                 i == 32 || i == 34 || i == 36 || i == 38)) {
+                 i == 32 || i == 34 || i == 36 || i == 38 ||
+                 i == 52 || i == 60 || i == 66 || i == 74)) {
                 pending_capture_ =
                     screenshot_path_ + "." + std::to_string(i) + ".bmp";
             }
@@ -242,6 +248,25 @@ void Game::run() {
                 d->add_animation("walk", devil_walk_sheet_.get(), 4, 40, 0.14f, true);
                 d->play_animation("walk");
                 entities_.push_back(std::move(d));
+            }
+            // For verification: at frame 45 shoot out the barrel nearest the
+            // player so the fuse flash, the blast, and any chain reaction can
+            // be captured (the fuse burns ~13 frames, the fireball ~27).
+            if (screenshot_mode_ && i == 45 && player_) {
+                Barrel* nearest = nullptr;
+                float best = 1e30f;
+                for (auto& e : entities_) {
+                    auto* b = dynamic_cast<Barrel*>(e.get());
+                    if (!b || !b->alive) continue;
+                    const float dx = b->pos.x - player_->pos.x;
+                    const float dy = b->pos.y - player_->pos.y;
+                    const float d2 = dx * dx + dy * dy;
+                    if (d2 < best) {
+                        best = d2;
+                        nearest = b;
+                    }
+                }
+                if (nearest) nearest->hit(Barrel::kMaxHealth);
             }
             // For screenshot verification: force a scene transition at frame
             // 100 so the fade + map swap + banner can be captured (the real
@@ -261,7 +286,9 @@ void Game::run() {
                       << " pickups=" << pickups_collected_;
             // Report the highest enemy animation frame seen during the run to
             // prove the animator ticked (robust even if all enemies die late).
-            std::cerr << " enemy_frame=" << max_enemy_anim_frame_ << '\n';
+            std::cerr << " enemy_frame=" << max_enemy_anim_frame_
+                      << " barrels=" << barrels_exploded_
+                      << " blast_kills=" << blast_kills_ << '\n';
         }
         return;
     }
@@ -387,43 +414,28 @@ void Game::on_character_select(int index) {
 }
 
 IsoCharStyle Game::character_style(int index) {
-    // Three playable character palettes: blue survivor, green ranger, red
-    // brawler. Each face gets a lightest/mid/dark shade so the box reads 3D.
+    // Three playable survivors sharing the Boxhead build — tan skin, black
+    // hair, denim legs, black boots — separated by shirt color.
+    IsoCharStyle s;
+    s.skin = SDL_Color{236, 196, 152, 255};
+    s.hair = SDL_Color{34, 28, 30, 255};
+    s.pants = SDL_Color{54, 62, 92, 255};
+    s.shoe = SDL_Color{30, 28, 32, 255};
+    s.eye = SDL_Color{28, 24, 26, 255};
     switch (index) {
-        case 1: {  // Green ranger
-            IsoCharStyle s;
-            s.body_top = SDL_Color{120, 200, 110, 255};
-            s.body_front = SDL_Color{70, 165, 70, 255};
-            s.body_side = SDL_Color{45, 115, 50, 255};
-            s.head_top = SDL_Color{150, 215, 140, 255};
-            s.head_front = SDL_Color{90, 175, 85, 255};
-            s.head_side = SDL_Color{55, 120, 55, 255};
-            s.leg = SDL_Color{45, 45, 60, 255};
-            return s;
-        }
-        case 2: {  // Red brawler
-            IsoCharStyle s;
-            s.body_top = SDL_Color{235, 95, 95, 255};
-            s.body_front = SDL_Color{205, 55, 55, 255};
-            s.body_side = SDL_Color{140, 35, 35, 255};
-            s.head_top = SDL_Color{245, 115, 115, 255};
-            s.head_front = SDL_Color{215, 70, 70, 255};
-            s.head_side = SDL_Color{145, 40, 40, 255};
-            s.leg = SDL_Color{60, 30, 30, 255};
-            return s;
-        }
-        default: {  // Blue survivor (index 0)
-            IsoCharStyle s;
-            s.body_top = SDL_Color{120, 190, 255, 255};
-            s.body_front = SDL_Color{60, 160, 255, 255};
-            s.body_side = SDL_Color{40, 110, 200, 255};
-            s.head_top = SDL_Color{150, 205, 255, 255};
-            s.head_front = SDL_Color{80, 170, 255, 255};
-            s.head_side = SDL_Color{50, 120, 210, 255};
-            s.leg = SDL_Color{50, 50, 70, 255};
-            return s;
-        }
+        case 1:  // Green ranger
+            s.shirt = SDL_Color{62, 148, 74, 255};
+            s.pants = SDL_Color{58, 66, 52, 255};
+            break;
+        case 2:  // Red brawler
+            s.shirt = SDL_Color{198, 58, 52, 255};
+            s.pants = SDL_Color{66, 52, 52, 255};
+            break;
+        default:  // Blue survivor
+            s.shirt = SDL_Color{58, 116, 196, 255};
+            break;
     }
+    return s;
 }
 
 const char* Game::character_name(int index) {
@@ -560,6 +572,10 @@ void Game::update(float dt) {
     ctx.world_w = world_w_;
     ctx.world_h = world_h_;
     ctx.tilemap = &tilemap_;
+    // Living barrels block movement like walls; refresh the list before
+    // anything moves this frame.
+    rebuild_obstacles();
+    ctx.obstacles = &obstacles_;
 
     // Update the player first so enemies can chase its new position.
     player_->update(dt, ctx);
@@ -625,6 +641,10 @@ void Game::update(float dt) {
     // Devils within line of sight fire fireballs at the player.
     update_devil_ranged_attacks(dt, ctx);
 
+    // Barrels whose fuse burned out this frame blow up (and may light other
+    // barrels, which detonate on their own fuse a moment later).
+    update_barrels();
+
     // In smoke, record the highest enemy animation frame seen so the summary
     // proves the animator ticked even if every enemy dies before the run ends.
     if (smoke_test_) {
@@ -667,10 +687,11 @@ void Game::update(float dt) {
     }
 
     // Reap dead entities (projectiles that hit/expired, dead enemies, used
-    // items).
+    // items). The player is kept even when dead: player_ points into this
+    // vector and the HUD/game-over screen still reads it.
     entities_.erase(std::remove_if(entities_.begin(), entities_.end(),
-                                   [](const std::unique_ptr<Entity>& e) {
-                                       return !e->alive;
+                                   [this](const std::unique_ptr<Entity>& e) {
+                                       return !e->alive && e.get() != player_;
                                    }),
                     entities_.end());
 
@@ -724,9 +745,9 @@ void Game::spawn_enemy(const GameContext& ctx) {
                 break;
             }
         }
-        if (!ctx.tilemap || !ctx.tilemap->is_solid(x, y)) break;
-        // landed on a solid obstacle tile: loop and try a different position
-        // along the same edge.
+        if (!ctx.blocked(x, y)) break;
+        // landed on a wall tile or a barrel: loop and try a different
+        // position along the same edge.
     }
     // Pick the enemy kind: zombies always; the tougher red Devil appears
     // from wave 2 onward (25% chance) as a special enemy.
@@ -780,6 +801,22 @@ void Game::fire_projectile(float dt, const GameContext& ctx) {
 }
 
 void Game::check_collisions() {
+    // Projectile vs barrel: any bullet (the player's or a devil's fireball)
+    // stops on a barrel and damages it. Enough hits light its fuse.
+    for (auto& a : entities_) {
+        auto* proj = dynamic_cast<Projectile*>(a.get());
+        if (!proj || !proj->alive) continue;
+        for (auto& b : entities_) {
+            auto* barrel = dynamic_cast<Barrel*>(b.get());
+            if (!barrel || !barrel->alive) continue;
+            if (entities_overlap(*proj, *barrel)) {
+                proj->alive = false;
+                barrel->hit(proj->damage_amount);
+                break;
+            }
+        }
+    }
+
     // Projectile vs enemy: a player-fired (non-hostile) projectile is
     // destroyed and the enemy takes hit damage from the weapon. Dead enemies
     // may drop an item. Hostile (devil) fireballs ignore enemies.
@@ -1105,6 +1142,8 @@ void Game::reset() {
     item_spawn_timer_ = 0.0f;
     pickups_collected_ = 0;
     max_enemy_anim_frame_ = -1;
+    barrels_exploded_ = 0;
+    blast_kills_ = 0;
     pickup_toast_timer_ = 0.0f;
     pickup_toast_.clear();
     state_ = GameState::Playing;
@@ -1153,7 +1192,9 @@ void Game::apply_level_swap(const GameContext& ctx) {
         std::remove_if(entities_.begin(), entities_.end(),
                        [](const std::unique_ptr<Entity>& e) {
                            return dynamic_cast<Enemy*>(e.get()) ||
-                                  dynamic_cast<Projectile*>(e.get());
+                                  dynamic_cast<Projectile*>(e.get()) ||
+                                  dynamic_cast<Barrel*>(e.get()) ||
+                                  dynamic_cast<Explosion*>(e.get());
                        }),
         entities_.end());
     if (player_) {
@@ -1236,6 +1277,82 @@ void Game::update_devil_ranged_attacks(float dt, const GameContext& ctx) {
     for (auto& s : spawned) entities_.push_back(std::move(s));
 }
 
+void Game::spawn_barrels_from_map() {
+    // Every "Barrel"/"Explosive" tile placement in the scene becomes a
+    // destructible prop. The tilemap deliberately does not draw or collide
+    // those tiles itself, so the Barrel entity is the only thing there.
+    for (const Tilemap::Spawn& s : tilemap_.explosive_spawns()) {
+        entities_.push_back(std::make_unique<Barrel>(s.cx, s.cy, s.w, s.h));
+    }
+}
+
+void Game::rebuild_obstacles() {
+    obstacles_.clear();
+    for (const auto& e : entities_) {
+        const auto* b = dynamic_cast<const Barrel*>(e.get());
+        if (!b || !b->alive) continue;
+        obstacles_.push_back(Obstacle{b->pos, b->size});
+    }
+}
+
+void Game::update_barrels() {
+    // Collect the barrels that reached the end of their fuse, then blow them
+    // up outside the loop: detonate() adds entities (fireball, item drops),
+    // which would invalidate an iterator over entities_.
+    std::vector<Vec2> blasts;
+    for (auto& e : entities_) {
+        auto* b = dynamic_cast<Barrel*>(e.get());
+        if (!b || !b->alive || !b->ready_to_explode()) continue;
+        b->alive = false;
+        blasts.push_back(b->pos);
+    }
+    barrels_exploded_ += static_cast<int>(blasts.size());
+    for (const Vec2& p : blasts) detonate(p);
+}
+
+void Game::detonate(Vec2 pos) {
+    constexpr float kRadius = Barrel::kBlastRadius;
+    constexpr int kPlayerBlastDamage = 1;
+    const float r2 = kRadius * kRadius;
+
+    // Item drops are queued: dropping inside the sweep would push into
+    // entities_ while it is being iterated.
+    std::vector<Vec2> drops;
+    for (auto& e : entities_) {
+        if (!e->alive || e.get() == player_) continue;
+        const float dx = e->pos.x - pos.x;
+        const float dy = e->pos.y - pos.y;
+        if (dx * dx + dy * dy > r2) continue;
+        if (auto* en = dynamic_cast<Enemy*>(e.get())) {
+            en->damage(Barrel::kBlastDamage);
+            if (!en->alive) {
+                ++score_;
+                ++blast_kills_;
+                drops.push_back(en->pos);
+            }
+        } else if (auto* b = dynamic_cast<Barrel*>(e.get())) {
+            // Chain reaction: a caught barrel lights its own fuse and goes up
+            // a fraction of a second later, walking the blast down a row.
+            b->hit(Barrel::kMaxHealth);
+        }
+    }
+
+    // The player is not immune to their own bomb, but the blast respects the
+    // normal i-frame window so a chain never deletes the whole health bar.
+    if (player_ && player_->alive && invuln_timer_ <= 0.0f) {
+        const float dx = player_->pos.x - pos.x;
+        const float dy = player_->pos.y - pos.y;
+        if (dx * dx + dy * dy <= r2) {
+            player_->damage(kPlayerBlastDamage);
+            invuln_timer_ = kInvulnDuration;
+            if (!player_->alive) game_over_ = true;
+        }
+    }
+
+    for (const Vec2& p : drops) maybe_drop_item(p);
+    entities_.push_back(std::make_unique<Explosion>(pos.x, pos.y, kRadius));
+}
+
 void Game::load_current_tilemap() {
     // Load the ".mx" tileset for the current scene; if it fails the floor
     // falls back to the solid level color (render() checks tilemap_.loaded()).
@@ -1248,6 +1365,8 @@ void Game::load_current_tilemap() {
     if (ok) tilemap_.world_bounds(mw, mh);
     world_w_ = std::max(mw, static_cast<float>(kViewWidth));
     world_h_ = std::max(mh, static_cast<float>(kViewHeight));
+    // Turn the scene's explosive tile placements into Barrel entities.
+    spawn_barrels_from_map();
     // Recentre the camera on the new world immediately.
     update_camera();
 }
@@ -1268,7 +1387,24 @@ void Game::capture_screenshot_to(const std::string& path) {
 }
 
 void Game::shutdown() {
+    // Every SDL_Texture must be destroyed while its renderer is still alive.
+    // Game members are destroyed *after* this function returns, so anything
+    // holding a texture has to be released here by hand or SDL frees it
+    // against a dead renderer and corrupts the heap on exit.
     entities_.clear();
+    font_.release();  // cached text textures + the TTF_Font (before TTF_Quit)
+    tilemap_.clear();
+    player_walk_sheet_.reset();
+    player_idle_sheet_.reset();
+    zombie_walk_sheet_.reset();
+    devil_walk_sheet_.reset();
+    projectile_tex_.reset();
+    fireball_tex_.reset();
+    health_tex_.reset();
+    weapon_tex_pistol_.reset();
+    weapon_tex_shotgun_.reset();
+    weapon_tex_machinegun_.reset();
+    for (auto& g : gun_hand_tex_) g.reset();
     if (renderer_) {
         SDL_DestroyRenderer(renderer_);
         renderer_ = nullptr;

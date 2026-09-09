@@ -21,6 +21,10 @@ public:
     // Handle one event. Returns the index of the activated item, or -1.
     int handle_event(const SDL_Event& e, float window_w, float window_h);
 
+    // Index of the currently highlighted item (not yet activated). The
+    // character-select screen reads this to preview the highlighted survivor.
+    int selected_index() const { return selected_; }
+
     // Render the title centered near the top, items listed below it.
     void render(Font& font, const std::string& title, float window_w,
                float window_h) const;

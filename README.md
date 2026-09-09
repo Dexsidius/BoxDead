@@ -13,12 +13,34 @@ A re-edition of Boxhead built in C++ with SDL3.
 - **macOS (Homebrew):** `brew install sdl3 sdl3-ttf`
 - **Debian/Ubuntu:** `apt install libsdl3-dev libsdl3-ttf-dev`
 - **Arch:** `pacman -S sdl3 sdl3_ttf`
+- **Windows (MSYS2, the easiest route):** install MSYS2 (`winget install
+  MSYS2.MSYS2`), then from the **UCRT64** shell:
+
+  ```bash
+  pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
+            mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-sdl3 \
+            mingw-w64-ucrt-x86_64-sdl3-ttf
+  cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+  cmake --build build
+  ```
+
+  Run `./build/BoxDead.exe` from that same UCRT64 shell (it needs
+  `C:\msys64\ucrt64\bin` on PATH for `SDL3.dll` / `SDL3_ttf.dll`), or copy
+  those DLLs next to the exe.
 - **Windows (vcpkg):** `vcpkg install sdl3 sdl3-ttf`
 - **No package manager?** Pass `-DBOXDEAD_FETCH_SDL3=ON` and CMake fetches
   SDL3 from source automatically. SDL3_ttf still needs to be installed
   separately (it is only used for text, so you can also remove the
   `find_package(SDL3_ttf ...)` line and font rendering if you want a
   dependency-free build).
+
+## Assets and Git LFS
+
+`assets/dejavu-sans.ttf` is stored in **Git LFS**. GitHub's "Download ZIP"
+button does *not* fetch LFS content, so a zip download leaves a 131-byte
+pointer file there and the game exits at startup with `Font load failed`.
+Either clone with `git lfs` installed (`git lfs pull`), or drop any real
+`DejaVuSans.ttf` at that path.
 
 ## Build
 
@@ -95,6 +117,9 @@ include/boxdead/        - public headers (one responsibility each)
   player.hpp            - Player (movement, health, i-frame flash, weapons)
   enemy.hpp             - Enemy (chase AI)
   projectile.hpp        - Projectile (bullet + hit damage)
+  barrel.hpp            - Barrel (explosive prop: health + fuse)
+  explosion.hpp         - Explosion (the fireball a blast leaves behind)
+  iso_sprite.hpp        - procedural isometric art (characters, barrels, fx)
   weapon.hpp            - WeaponKind + WeaponSpec profiles
   item.hpp              - Item base + HealthPickup + WeaponPickup
   animation.hpp         - Animation (sprite-sheet frames) + Animator
@@ -107,6 +132,7 @@ src/                    - implementations
   game.cpp              - state machine, loop, spawning, firing, collisions,
                           item pickups, rendering, HUD
   player.cpp / enemy.cpp / projectile.cpp
+  barrel.cpp / explosion.cpp / iso_sprite.cpp
   weapon.cpp / item.cpp / menu.cpp / font.cpp
   animation.cpp / animated_entity.cpp
   texture.cpp / sprite.cpp / entity.cpp
@@ -162,9 +188,8 @@ a horizontal strip and slicing it with `make_animation()`.
 
 ## Enemies
 
-There are two enemy types, both Boxhead-style creatures drawn procedurally with
-`make_creature_sheet_texture` (a boxy head with a hair band or horns, a torso
-with a tie and blood, and two legs running a 4-phase walk):
+There are two enemy types, both Boxhead-style box figures drawn by the
+isometric renderer (see "Boxhead-style characters" above):
 
 - **Zombie** — the general enemy. Pale green skin, dark hair, white shirt with a
   red tie and blood splatter. 1 HP, speed 120 px/s. Spawns every wave.
@@ -176,18 +201,43 @@ with a tie and blood, and two legs running a 4-phase walk):
   toward the player on a per-devil cooldown. A fireball that hits the player
   deals contact damage on the same invulnerability window as a melee hit.
 
-## Isometric characters
+## Boxhead-style characters
 
-Characters (player and enemies) render as isometric 3D box figures drawn
-per frame with `SDL_RenderGeometry`. Each figure has a ground shadow, two
-animated legs that stride forward/back under the body (feet poke out beyond
-the torso and lift during the swing phase, alternating left/right so it reads
-as a real walk cycle instead of a hop), a torso with three shaded faces (top /
-front / side) sitting on top of the legs, and a head. The body rotates to face
-the aim direction (8-way yaw) so the visible faces track where the character is
-facing. The player additionally holds the current gun in-hand, rotated to the
-aim angle. Entities are drawn back-to-front by ground position so closer
-characters correctly overlap further ones.
+Characters (player and enemies) are drawn per frame with `SDL_RenderGeometry`
+as a stack of shaded, black-outlined 3D boxes -- the Boxhead look: a chunky
+square head, a slab of hair, a coloured shirt, stubby legs with boots, and both
+arms held straight out front. Each figure is built from:
+
+- a **ground shadow**,
+- **two legs with shoes** that stride forward/back along the facing direction
+  and lift only while swinging, so one leg bears weight while the other swings,
+- a **torso** carrying decals painted on its front face (a tie stripe, blood),
+- **two arms** reaching forward; the player's gun is drawn at the hands,
+  rotated to the exact aim angle,
+- a **head** with eyes (and a mouth on zombies) painted on its front face,
+- a **hair slab** and optional **horns** on top.
+
+Every box is shaded per visible face (the face squarest to the view is
+lightest) and traced with a dark outline, which is what makes the figures read
+as crisp Boxhead cutouts rather than untextured blobs. Decals are placed in a
+box face's own UV space by `fill_face_rect`, so they follow the body as it
+turns. The whole figure yaws to the aim direction -- limbs included, so the
+arms and the stride swing around with the facing and the eyes disappear when a
+character turns its back to the camera. Entities are drawn back-to-front by
+ground position so closer characters overlap further ones.
+
+A palette is authored as flat base colors (`IsoCharStyle`: skin, hair, shirt,
+pants, shoe, tie, horn, eye, outline) and the renderer derives the per-face
+shading itself, so adding a character is a handful of colors:
+
+- **Survivors** - tan skin, black hair, denim legs, black boots; the three
+  playable characters differ only by shirt color (blue / green / red).
+- **Zombie** - sickly green skin, black hair, a bloodied white office shirt
+  with a red tie, dark slacks, and a gaping mouth.
+- **Red Devil** - red hide, bald, two black horns, glowing yellow eyes.
+
+`style.tint` multiplies the whole palette, which is how the player flashes red
+during i-frames and how a barrel flashes white on its fuse.
 
 ## Inventory & weapons
 
@@ -198,6 +248,39 @@ the HUD lists every owned weapon, highlights the selected one, and greys out
 dry weapons. Running out of ammo on a finite weapon auto-switches back to the
 Pistol so you are never stuck. The aim mode (Face Mouse vs Face Movement) can
 be toggled in the Options menu.
+
+## Explosive barrels
+
+Every scene is littered with red fuel drums that go up when shot and take the
+horde with them.
+
+- **Shoot them.** A barrel has 3 HP and blocks movement like a wall until it is
+  destroyed. Any bullet stops on a barrel -- your shots and devil fireballs
+  both count.
+- **Fuse.** At 0 HP the barrel flashes white-hot for 0.22s before detonating,
+  which is your window to get clear.
+- **Blast.** Everything within 110px takes 5 damage -- enough to kill zombies
+  (1 HP) and devils (2 HP) outright. Blast kills count toward your score and
+  can drop items just like a shot kill.
+- **Chain reaction.** Barrels caught in a blast light their own fuses, so one
+  well-placed shot walks the explosion down a row of drums.
+- **It hurts you too.** Standing in your own blast costs 1 HP on the normal
+  invulnerability window, so a chain can never delete the whole health bar --
+  but leading a pack of zombies past a barrel and shooting it is the intended
+  play, not standing next to it.
+
+Barrels come from the level tileset, so they are level design rather than
+hardcoded positions. A tile whose name contains `barrel`, `drum`, `explosive`,
+or `tnt` is never drawn or collided as a tile: the tilemap hands its placements
+to the game, which spawns a destructible `Barrel` entity at each one (drawn as
+a 3D drum by `draw_iso_barrel`, so the tile's `.bmp` only exists for the
+editor's preview). Add barrels to a map by adding a `Barrel` layer in
+LevelEdit++ and painting them in.
+
+Code: `include/boxdead/barrel.hpp` / `src/barrel.cpp` (the prop and its fuse),
+`include/boxdead/explosion.hpp` / `src/explosion.cpp` (the fireball), and
+`Game::update_barrels()` / `Game::detonate()` in `src/game.cpp` (the blast
+sweep, which is the only thing that can see every entity).
 
 ## Scenes / levels
 
@@ -232,7 +315,8 @@ containing the `.mx` plus an `assets/` subfolder of `.bmp` tile images:
             "locations": [[32, 32, 32, 32], [64, 32, 32, 32], ...]
         },
         "Wall":  { "filepath": "assets/Wall.bmp",  "locations": [...] },
-        "Block": { "filepath": "assets/Block.bmp", "locations": [...] }
+        "Block": { "filepath": "assets/Block.bmp", "locations": [...] },
+        "Barrel": { "filepath": "assets/Barrel.bmp", "locations": [...] }
     }
 }
 ```
@@ -241,6 +325,14 @@ containing the `.mx` plus an `assets/` subfolder of `.bmp` tile images:
   `assets/<TileName>.bmp`).
 - `locations` is a list of `[x, y, w, h]` world-pixel placements (default tile
   size 32x32). The player/enemies collide with solid tiles.
+
+### Explosive tiles (barrels)
+
+A tile is an **explosive barrel** if its name contains (case-insensitive):
+`barrel`, `drum`, `explosive`, `tnt`. This is checked before the solid test, so
+"Explosive Barrel" becomes a barrel rather than a wall. Those placements are
+lifted out of the tile list entirely and become `Barrel` entities -- see
+"Explosive barrels" above.
 
 ### Solid tiles (collision)
 
@@ -253,7 +345,8 @@ editor and the player/enemies will slide along them instead of walking through.
 ### Adding a new scene
 
 1. Build a map in LevelEdit++ using `.bmp` tiles (32x32). Name walls/blocks with a
-   solid keyword if they should block movement.
+   solid keyword if they should block movement, and name a layer `Barrel` for
+   explosive drums.
 2. Export to `.mx` into a folder like `assets/maps/MyLevel/` with its tile `.bmp`s
    in `assets/maps/MyLevel/assets/`.
 3. Add a `Level` entry in `src/game.cpp` (`kLevels[]`) pointing `map_path` at the
@@ -279,8 +372,15 @@ SDL_VIDEO_DRIVER=dummy ./build/BoxDead --smoke-test
 
 Runs a ~15-second headless scenario (auto-firing at enemies, forcing item
 spawns on the player) and prints a summary line — useful for CI or headless
-environments. The summary includes `enemy_frame`, a live enemy's current
-animation frame, proving the animator ticks. There are also pure unit tests:
+environments. The summary includes `enemy_frame` (a live enemy's current animation frame,
+proving the animator ticks), `barrels` (how many barrels detonated), and
+`blast_kills` (enemies killed by explosions rather than bullets), so a run
+that reports `barrels=0` means the level's explosive tiles never loaded.
+
+The screenshot harness (`--screenshot <path>`) is the visual counterpart: it
+runs 220 frames against a real renderer, forces a devil into fireball range at
+frame 30, shoots out the barrel nearest the player at frame 45, and swaps
+scenes at frame 100, dumping BMPs around each event. There are also pure unit tests:
 
 ```bash
 # Animator: frame advance + looping.
@@ -290,10 +390,11 @@ g++ -std=c++20 -I include test_animator.cpp src/animation.cpp -o test_animator
 # Player weapon state: equip / consume / auto-revert.
 g++ -std=c++20 -I include test_weapon.cpp src/player.cpp src/weapon.cpp \
     src/entity.cpp src/animated_entity.cpp src/animation.cpp \
-    src/sprite.cpp src/texture.cpp -lSDL3 -o test_weapon
+    src/sprite.cpp src/texture.cpp src/iso_sprite.cpp src/tilemap.cpp \
+    -lSDL3 -o test_weapon
 ./test_weapon
 
-# Tilemap loader: every scene .mx parses and yields tiles.
+# Tilemap loader: every scene .mx parses, yields tiles, and lists barrels.
 g++ -std=c++20 -I include -I /usr/include/SDL3 test_tilemap.cpp \
     src/tilemap.cpp src/texture.cpp -lSDL3 -o test_tilemap
 SDL_VIDEO_DRIVER=dummy ./test_tilemap
