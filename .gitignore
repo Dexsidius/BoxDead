@@ -32,3 +32,9 @@ Thumbs.db
 # Windows release bundle: only the zip is tracked (LFS)
 /dist/*
 !/dist/*.zip
+
+# Third-party asset packs and anything derived from them. Kept locally for
+# reference only -- their licence restricts redistribution, so none of it is
+# tracked. The tiles the game actually ships are generated from scratch by
+# tools/build_levels.py and are tracked.
+/archive/

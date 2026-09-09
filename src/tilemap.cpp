@@ -10,6 +10,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <vector>
 
 
 using json = nlohmann::json;
@@ -18,15 +19,24 @@ namespace bd {
 
 namespace {
 
-// Resolve a tile .bmp path relative to the .mx file's directory. The editor
-// writes paths like "assets/Grass Patch.bmp" relative to the .mx file.
-std::string resolve_asset(const std::string& mx_path,
-                          const std::string& asset_path) {
-    // Find the last path separator in the .mx path.
+// Candidate on-disk paths for a tile image, in priority order.
+//
+// LevelEdit++ writes `filepath` relative to *its own* working directory
+// ("exports/<Level>/assets/Tile.bmp"), while BoxDead loads a map from wherever
+// the .mx happens to live. Trying the basename under the .mx's own assets/
+// directory as a fallback means one .mx file works unmodified in both: the
+// editor resolves the literal path, the game finds the same file next to the
+// map it just opened.
+std::vector<std::string> resolve_candidates(const std::string& mx_path,
+                                            const std::string& asset_path) {
     auto pos = mx_path.find_last_of("/\\");
-    std::string base =
+    const std::string base =
         (pos == std::string::npos) ? std::string{} : mx_path.substr(0, pos + 1);
-    return base + asset_path;
+    auto slash = asset_path.find_last_of("/\\");
+    const std::string leaf = (slash == std::string::npos)
+                                 ? asset_path
+                                 : asset_path.substr(slash + 1);
+    return {base + asset_path, base + "assets/" + leaf, asset_path};
 }
 
 // Case-insensitive "name contains keyword" test for solid tiles.
@@ -67,7 +77,36 @@ void Tilemap::clear() {
     tiles_.clear();
     explosives_.clear();
     textures_.clear();
+    solid_cells_.clear();
+    grid_cols_ = 0;
+    grid_rows_ = 0;
     loaded_ = false;
+}
+
+void Tilemap::build_solid_index() {
+    solid_cells_.clear();
+    float w = 0.0f;
+    float h = 0.0f;
+    world_bounds(w, h);
+    grid_cols_ = std::max(1, static_cast<int>(w / kGridCell) + 1);
+    grid_rows_ = std::max(1, static_cast<int>(h / kGridCell) + 1);
+    solid_cells_.assign(static_cast<size_t>(grid_cols_) * grid_rows_, {});
+    for (size_t i = 0; i < tiles_.size(); ++i) {
+        const Placement& t = tiles_[i];
+        if (!t.solid) continue;
+        const int c0 = std::max(0, static_cast<int>(t.x / kGridCell));
+        const int c1 = std::min(grid_cols_ - 1,
+                                static_cast<int>((t.x + t.w - 1) / kGridCell));
+        const int r0 = std::max(0, static_cast<int>(t.y / kGridCell));
+        const int r1 = std::min(grid_rows_ - 1,
+                                static_cast<int>((t.y + t.h - 1) / kGridCell));
+        for (int r = r0; r <= r1; ++r) {
+            for (int c = c0; c <= c1; ++c) {
+                solid_cells_[static_cast<size_t>(r) * grid_cols_ + c]
+                    .push_back(static_cast<int>(i));
+            }
+        }
+    }
 }
 
 bool Tilemap::load(SDL_Renderer* r, const std::string& mx_path) {
@@ -129,8 +168,12 @@ bool Tilemap::load(SDL_Renderer* r, const std::string& mx_path) {
             }
         }
         if (!tex) {
-            std::string full = resolve_asset(mx_path, filepath);
-            auto t = Texture::load(r, full);
+            std::unique_ptr<Texture> t;
+            for (const std::string& cand :
+                 resolve_candidates(mx_path, filepath)) {
+                t = Texture::load(r, cand);
+                if (t) break;
+            }
             if (!t) continue;  // skip tiles whose .bmp can't be loaded
             tex = t.get();
             cache.emplace_back(filepath, tex);
@@ -152,19 +195,24 @@ bool Tilemap::load(SDL_Renderer* r, const std::string& mx_path) {
         }
     }
 
+    build_solid_index();
     loaded_ = true;
     return true;
 }
 
-void Tilemap::render(SDL_Renderer* r, float cam_x, float cam_y) const {
+void Tilemap::render(SDL_Renderer* r, float cam_x, float cam_y, float view_w,
+                    float view_h) const {
     for (const auto& t : tiles_) {
         const SDL_FRect dst{static_cast<float>(t.x) - cam_x,
                             static_cast<float>(t.y) - cam_y,
                             static_cast<float>(t.w),
                             static_cast<float>(t.h)};
-        // Cull tiles fully outside the viewport (cam +/- view is unknown here,
-        // so just skip tiles whose screen rect is entirely off any side — a
-        // cheap negative check; SDL clips the rest).
+        // Skip anything entirely off-screen rather than handing SDL a draw
+        // call to clip away.
+        if (dst.x + dst.w <= 0.0f || dst.y + dst.h <= 0.0f ||
+            dst.x >= view_w || dst.y >= view_h) {
+            continue;
+        }
         SDL_RenderTexture(r, t.tex, nullptr, &dst);
     }
 }
@@ -183,10 +231,15 @@ void Tilemap::world_bounds(float& out_w, float& out_h) const {
 }
 
 bool Tilemap::is_solid(float px, float py) const {
-    for (const auto& t : tiles_) {
-        if (!t.solid) continue;
-        if (px >= t.x && px < t.x + t.w &&
-            py >= t.y && py < t.y + t.h) {
+    if (solid_cells_.empty()) return false;
+    if (px < 0.0f || py < 0.0f) return false;
+    const int c = static_cast<int>(px / kGridCell);
+    const int r = static_cast<int>(py / kGridCell);
+    if (c < 0 || c >= grid_cols_ || r < 0 || r >= grid_rows_) return false;
+    // Only the solid tiles sharing this grid cell can contain the point.
+    for (int i : solid_cells_[static_cast<size_t>(r) * grid_cols_ + c]) {
+        const Placement& t = tiles_[static_cast<size_t>(i)];
+        if (px >= t.x && px < t.x + t.w && py >= t.y && py < t.y + t.h) {
             return true;
         }
     }

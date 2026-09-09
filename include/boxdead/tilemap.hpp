@@ -53,10 +53,14 @@ public:
     // Release all loaded tile textures + placements.
     void clear();
 
-    // Draw every tile placement (floor + walls). Call after SDL_RenderClear.
-    // `cam_x/cam_y` subtract the camera position so a world larger than the
-    // viewport scrolls: screen = world - camera.
-    void render(SDL_Renderer* r, float cam_x, float cam_y) const;
+    // Draw every visible tile placement (floor + walls). Call after
+    // SDL_RenderClear. `cam_x/cam_y` subtract the camera position so a world
+    // larger than the viewport scrolls: screen = world - camera. Tiles outside
+    // the `view_w` x `view_h` viewport are skipped, which is what keeps very
+    // large maps (thousands of tiles) from spending the frame on draw calls
+    // for tiles nobody can see.
+    void render(SDL_Renderer* r, float cam_x, float cam_y, float view_w,
+                float view_h) const;
 
     // Where the level wants an explosive barrel. These come from tiles named
     // with an explosive keyword and are NOT part of the drawn/collided tile
@@ -84,6 +88,16 @@ private:
         int x, y, w, h;
         bool solid;
     };
+
+    // Uniform grid over the map holding, per cell, the indices of the solid
+    // placements overlapping it. is_solid() then tests a handful of rects
+    // instead of every tile in the level, which matters once a map runs to
+    // thousands of tiles and every entity queries it twice a frame.
+    void build_solid_index();
+    static constexpr float kGridCell = 64.0f;
+    std::vector<std::vector<int>> solid_cells_;
+    int grid_cols_ = 0;
+    int grid_rows_ = 0;
 
     std::vector<std::unique_ptr<Texture>> textures_;  // owns the .bmp textures
     std::vector<Placement> tiles_;
