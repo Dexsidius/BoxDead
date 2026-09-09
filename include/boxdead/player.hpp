@@ -2,6 +2,7 @@
 #pragma once
 
 #include "boxdead/animated_entity.hpp"
+#include "boxdead/iso_sprite.hpp"
 #include "boxdead/weapon.hpp"
 #include "boxdead/math.hpp"
 
@@ -67,10 +68,14 @@ public:
     Vec2 last_move_dir() const { return last_move_dir_; }
 
     void set_color_override(SDL_Color c) { sprite_.color = c; }
+    // Set the character's color palette (from the character-select screen).
+    void set_style(const IsoCharStyle& s) { style_ = s; }
+    const IsoCharStyle& style() const { return style_; }
     void update(float dt, const GameContext& ctx) override;
     void render(SDL_Renderer* r, float cam_x, float cam_y) const override;
 
 private:
+    IsoCharStyle style_{};  // body/head/leg palette (character skin)
     float speed_;
     bool owned_[kSlotCount] = {true, false, false};
     int ammo_[kSlotCount] = {-1, 0, 0};   // -1 = infinite

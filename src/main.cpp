@@ -9,12 +9,17 @@
 
 int main(int argc, char* argv[]) {
     bool smoke_test = false;
+    bool menu_shot = false;
     std::string screenshot_path;
     for (int i = 1; i < argc; ++i) {
         std::string_view arg(argv[i]);
         if (arg == "--smoke-test") smoke_test = true;
         else if (arg == "--screenshot" && i + 1 < argc)
             screenshot_path = argv[++i];
+        else if (arg == "--menu-shot" && i + 1 < argc) {
+            menu_shot = true;
+            screenshot_path = argv[++i];
+        }
     }
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -24,7 +29,7 @@ int main(int argc, char* argv[]) {
 
     int rc = 0;
     {
-        bd::Game game(smoke_test, screenshot_path);
+        bd::Game game(smoke_test, screenshot_path, menu_shot);
         if (!game.init()) {
             rc = 1;
         } else {

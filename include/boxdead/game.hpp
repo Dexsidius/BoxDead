@@ -3,6 +3,7 @@
 #include "boxdead/entity.hpp"
 #include "boxdead/enemy.hpp"
 #include "boxdead/font.hpp"
+#include "boxdead/iso_sprite.hpp"
 #include "boxdead/menu.hpp"
 #include "boxdead/player.hpp"
 #include "boxdead/projectile.hpp"
@@ -34,11 +35,12 @@ struct Camera {
 
 // High-level game state. The run loop dispatches input/update/render based
 // on the current state, so the menu, options, and gameplay never overlap.
-enum class GameState { MainMenu, Options, Playing, GameOver };
+enum class GameState { MainMenu, CharacterSelect, Options, Playing, GameOver };
 
 class Game {
 public:
-    explicit Game(bool smoke_test = false, std::string screenshot_path = "");
+    explicit Game(bool smoke_test = false, std::string screenshot_path = "",
+                 bool menu_shot = false);
     ~Game();
 
     Game(const Game&) = delete;
@@ -96,6 +98,8 @@ private:
 
     // Menu / state transitions.
     void on_main_menu_select(int index, bool& running);
+    void on_character_select(int index);
+    void enter_character_select();
     void on_options_select(int index);
     void enter_options();
     void return_to_menu();
@@ -117,6 +121,12 @@ private:
     float wave_duration_ = 15.0f;
     int difficulty_ = 1;  // 0 Easy, 1 Normal, 2 Hard
     AimMode aim_mode_ = AimMode::FaceMouse;  // FaceMouse or FaceMovement
+    // Selected character skin (0=Blue, 1=Green, 2=Red). Chosen on the
+    // character-select screen before a New Game starts.
+    int selected_character_ = 0;
+    // Palettes for the playable characters (preview + applied to the player).
+    static IsoCharStyle character_style(int index);
+    static const char* character_name(int index);
 
     // Computes the player's aim direction this frame (used by both the gun
     // render and firing, so the visual and bullet dir never diverge).
@@ -140,6 +150,7 @@ private:
     std::unique_ptr<Texture> zombie_walk_sheet_;
     std::unique_ptr<Texture> devil_walk_sheet_;
     std::unique_ptr<Texture> projectile_tex_;
+    std::unique_ptr<Texture> fireball_tex_;  // devil ranged attack sprite
     std::unique_ptr<Texture> health_tex_;
     std::unique_ptr<Texture> weapon_tex_pistol_;
     std::unique_ptr<Texture> weapon_tex_shotgun_;
@@ -155,13 +166,22 @@ private:
     float world_h_ = static_cast<float>(kViewHeight);
     Camera camera_;
     void update_camera();  // follow the player, clamp to world bounds
+    // True if no solid tile blocks the line from `a` to `b` (devil sight line).
+    bool line_of_solid_clear(float ax, float ay, float bx, float by) const;
+    // Devils within range + line of sight fire a fireball at the player.
+    void update_devil_ranged_attacks(float dt, const GameContext& ctx);
     std::vector<std::unique_ptr<Entity>> entities_;
     Player* player_ = nullptr;
     float spawn_timer_ = 0.0f;
     float fire_cooldown_ = 0.0f;
     bool smoke_test_;
     bool screenshot_mode_ = false;
+    bool menu_shot_ = false;
     std::string screenshot_path_;
+    // When set, render() captures the framebuffer to this path RIGHT BEFORE
+    // SDL_RenderPresent (post-present readback is unreliable/blank on some
+    // drivers, so we read the back buffer while it still holds the frame).
+    std::string pending_capture_;
 };
 
 }  // namespace bd

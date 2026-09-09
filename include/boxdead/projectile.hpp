@@ -13,6 +13,9 @@ public:
     void update(float dt, const GameContext& ctx) override;
 
     int damage_amount = 1;  // applied to enemies on hit
+    // Hostile projectiles (devil fireballs) damage the player; player-fired
+    // bullets are not hostile and damage enemies.
+    bool hostile = false;
 
 private:
     float life_;

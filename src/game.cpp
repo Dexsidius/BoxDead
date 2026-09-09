@@ -47,9 +47,10 @@ const Game::Level Game::kLevels[] = {
 const int Game::kLevelCount =
     sizeof(Game::kLevels) / sizeof(Game::kLevels[0]);
 
-Game::Game(bool smoke_test, std::string screenshot_path)
+Game::Game(bool smoke_test, std::string screenshot_path, bool menu_shot)
     : smoke_test_(smoke_test),
       screenshot_mode_(!screenshot_path.empty()),
+      menu_shot_(menu_shot),
       screenshot_path_(std::move(screenshot_path)) {}
 
 Game::~Game() { shutdown(); }
@@ -101,6 +102,8 @@ bool Game::init() {
 
     projectile_tex_ = make_solid_sprite_texture(
         renderer_, SDL_Color{255, 220, 60, 255}, 8);
+    fireball_tex_ = make_solid_sprite_texture(
+        renderer_, SDL_Color{255, 120, 30, 255}, 16);
     health_tex_ = make_cross_sprite_texture(
         renderer_, SDL_Color{40, 170, 70, 255}, SDL_Color{255, 255, 255, 255},
         22);
@@ -151,7 +154,14 @@ bool Game::init() {
     std::srand(static_cast<unsigned>(std::time(nullptr)));
 
     menu_.set_items(kMainMenuItems);
-    state_ = (smoke_test_ || screenshot_mode_) ? GameState::Playing : GameState::MainMenu;
+    state_ = menu_shot_ ? GameState::CharacterSelect
+                        : ((smoke_test_ || screenshot_mode_) ? GameState::Playing
+                                                              : GameState::MainMenu);
+    if (menu_shot_) {
+        // Character-select preview screen; render one frame and capture it.
+        menu_.set_items({character_name(0), character_name(1), character_name(2), "Back"});
+        menu_.reset();
+    }
 
     // Smoke/screenshot skip the main menu, so they never go through reset();
     // load the first scene's tileset here so the world size is known before we
@@ -172,6 +182,7 @@ bool Game::init() {
     player->play_animation("idle");
     player_ = player.get();
     apply_gun_textures(*player_);
+    player_->set_style(character_style(selected_character_));
     if (smoke_test_ || screenshot_mode_) player_->health = 1000;  // survive the whole smoke run
     entities_.push_back(std::move(player));
     update_camera();
@@ -179,6 +190,28 @@ bool Game::init() {
 }
 
 void Game::run() {
+    if (menu_shot_) {
+        // Render the character-select preview screen once and capture it.
+        // Capture BEFORE SDL_RenderPresent: after present the back buffer is
+        // undefined, so reading it back yields a black frame.
+        bool running = true;
+        process_input(running);
+        const float ww = static_cast<float>(kViewWidth);
+        const float wh = static_cast<float>(kViewHeight);
+        const Level& lvl = current_level();
+        SDL_SetRenderDrawColor(renderer_, lvl.floor.r, lvl.floor.g, lvl.floor.b,
+                              SDL_ALPHA_OPAQUE);
+        SDL_RenderClear(renderer_);
+        menu_.render(font_, "SELECT CHARACTER", ww, wh);
+        const int idx = std::clamp(menu_.selected_index(), 0, 2);
+        const float preview_t = static_cast<float>(SDL_GetTicks()) / 1000.0f;
+        draw_iso_character(renderer_, ww * 0.5f, wh * 0.82f, 80.0f, 80.0f,
+                           0.0f, -1.0f, preview_t * 6.0f,
+                           character_style(idx), nullptr, 0.0f);
+        capture_screenshot_to(screenshot_path_);
+        SDL_RenderPresent(renderer_);
+        return;
+    }
     if (smoke_test_ || screenshot_mode_) {
         // Drive a short fixed-step scenario so combat, enemy drops, and item
         // pickups are all exercised. In screenshot mode this runs under a real
@@ -189,23 +222,38 @@ void Game::run() {
         for (int i = 0; i < frames && running; ++i) {
             process_input(running);
             update(dt);
+            // Capture requested frames via the pre-present path (reliable):
+            // set pending_capture_ before render() so render() reads the back
+            // buffer right before SDL_RenderPresent.
+            if (screenshot_mode_ &&
+                (i == 90 || i == 110 || i == 160 || i == 185 ||
+                 i == 32 || i == 34 || i == 36 || i == 38)) {
+                pending_capture_ =
+                    screenshot_path_ + "." + std::to_string(i) + ".bmp";
+            }
             render();
+            // For verification: at frame 30 force a Devil just within fire
+            // range of the player so the ranged fireball attack can be
+            // captured in flight.
+            if (screenshot_mode_ && i == 30 && player_) {
+                const float dx = 40.0f;  // within kDevilFireRange (50), clear sight
+                auto d = std::make_unique<Enemy>(
+                    EnemyKind::Devil, player_->pos.x + dx, player_->pos.y);
+                d->add_animation("walk", devil_walk_sheet_.get(), 4, 40, 0.14f, true);
+                d->play_animation("walk");
+                entities_.push_back(std::move(d));
+            }
             // For screenshot verification: force a scene transition at frame
             // 100 so the fade + map swap + banner can be captured (the real
             // game triggers this every 15 waves automatically).
             if (screenshot_mode_ && i == 100) {
                 begin_level_transition((level_ + 1) % kLevelCount);
             }
-            // Capture a few frames in screenshot mode so at least one lands
-            // with live enemies on screen (they spawn and die quickly).
-            if (screenshot_mode_ && (i == 90 || i == 110 || i == 160 || i == 185)) {
-                const std::string p =
-                    screenshot_path_ + "." + std::to_string(i) + ".bmp";
-                capture_screenshot_to(p);
-            }
         }
         if (screenshot_mode_) {
-            capture_screenshot();
+            // Final capture already handled per-frame above via pre-present;
+            // nothing extra to do (a trailing render() here crashes on some
+            // X11 drivers after the scene has torn down).
         } else {
             std::cerr << "smoke: kills=" << score_ << " wave=" << wave_
                       << " hp=" << player_->health
@@ -265,6 +313,16 @@ void Game::process_input(bool& running) {
                 if (c >= 0) on_main_menu_select(c, running);
                 break;
             }
+            case GameState::CharacterSelect: {
+                if (event.type == SDL_EVENT_KEY_DOWN &&
+                    event.key.key == SDLK_ESCAPE) {
+                    return_to_menu();
+                    break;
+                }
+                int c = menu_.handle_event(event, ww, wh);
+                if (c >= 0) on_character_select(c);
+                break;
+            }
             case GameState::Options: {
                 if (event.type == SDL_EVENT_KEY_DOWN &&
                     event.key.key == SDLK_ESCAPE) {
@@ -305,11 +363,74 @@ void Game::process_input(bool& running) {
 
 void Game::on_main_menu_select(int index, bool& running) {
     if (index == 0) {
-        reset();  // New Game
+        enter_character_select();  // New Game -> pick a character
     } else if (index == 1) {
         enter_options();
     } else if (index == 2) {
         running = false;  // Exit
+    }
+}
+
+void Game::enter_character_select() {
+    state_ = GameState::CharacterSelect;
+    menu_.set_items({character_name(0), character_name(1), character_name(2), "Back"});
+    menu_.reset();
+}
+
+void Game::on_character_select(int index) {
+    if (index == 3) {
+        return_to_menu();
+        return;
+    }
+    selected_character_ = std::clamp(index, 0, 2);
+    reset();  // spawn into gameplay with the chosen character
+}
+
+IsoCharStyle Game::character_style(int index) {
+    // Three playable character palettes: blue survivor, green ranger, red
+    // brawler. Each face gets a lightest/mid/dark shade so the box reads 3D.
+    switch (index) {
+        case 1: {  // Green ranger
+            IsoCharStyle s;
+            s.body_top = SDL_Color{120, 200, 110, 255};
+            s.body_front = SDL_Color{70, 165, 70, 255};
+            s.body_side = SDL_Color{45, 115, 50, 255};
+            s.head_top = SDL_Color{150, 215, 140, 255};
+            s.head_front = SDL_Color{90, 175, 85, 255};
+            s.head_side = SDL_Color{55, 120, 55, 255};
+            s.leg = SDL_Color{45, 45, 60, 255};
+            return s;
+        }
+        case 2: {  // Red brawler
+            IsoCharStyle s;
+            s.body_top = SDL_Color{235, 95, 95, 255};
+            s.body_front = SDL_Color{205, 55, 55, 255};
+            s.body_side = SDL_Color{140, 35, 35, 255};
+            s.head_top = SDL_Color{245, 115, 115, 255};
+            s.head_front = SDL_Color{215, 70, 70, 255};
+            s.head_side = SDL_Color{145, 40, 40, 255};
+            s.leg = SDL_Color{60, 30, 30, 255};
+            return s;
+        }
+        default: {  // Blue survivor (index 0)
+            IsoCharStyle s;
+            s.body_top = SDL_Color{120, 190, 255, 255};
+            s.body_front = SDL_Color{60, 160, 255, 255};
+            s.body_side = SDL_Color{40, 110, 200, 255};
+            s.head_top = SDL_Color{150, 205, 255, 255};
+            s.head_front = SDL_Color{80, 170, 255, 255};
+            s.head_side = SDL_Color{50, 120, 210, 255};
+            s.leg = SDL_Color{50, 50, 70, 255};
+            return s;
+        }
+    }
+}
+
+const char* Game::character_name(int index) {
+    switch (index) {
+        case 1: return "Green Ranger";
+        case 2: return "Red Brawler";
+        default: return "Blue Survivor";
     }
 }
 
@@ -501,6 +622,9 @@ void Game::update(float dt) {
         if (e.get() != player_) e->update(dt, ctx);
     }
 
+    // Devils within line of sight fire fireballs at the player.
+    update_devil_ranged_attacks(dt, ctx);
+
     // In smoke, record the highest enemy animation frame seen so the summary
     // proves the animator ticked even if every enemy dies before the run ends.
     if (smoke_test_) {
@@ -656,11 +780,12 @@ void Game::fire_projectile(float dt, const GameContext& ctx) {
 }
 
 void Game::check_collisions() {
-    // Projectile vs enemy: the projectile is destroyed and the enemy takes
-    // hit damage from the weapon. Dead enemies may drop an item.
+    // Projectile vs enemy: a player-fired (non-hostile) projectile is
+    // destroyed and the enemy takes hit damage from the weapon. Dead enemies
+    // may drop an item. Hostile (devil) fireballs ignore enemies.
     for (auto& a : entities_) {
         auto* proj = dynamic_cast<Projectile*>(a.get());
-        if (!proj || !proj->alive) continue;
+        if (!proj || !proj->alive || proj->hostile) continue;
         for (auto& b : entities_) {
             auto* en = dynamic_cast<Enemy*>(b.get());
             if (!en || !en->alive) continue;
@@ -672,6 +797,22 @@ void Game::check_collisions() {
                     ++score_;  // count the kill
                     maybe_drop_item(drop_pos);
                 }
+                break;
+            }
+        }
+    }
+
+    // Hostile projectile vs player: a devil fireball that hits the player deals
+    // contact damage on the same invulnerability window as melee.
+    if (invuln_timer_ <= 0.0f && player_->alive) {
+        for (auto& a : entities_) {
+            auto* proj = dynamic_cast<Projectile*>(a.get());
+            if (!proj || !proj->alive || !proj->hostile) continue;
+            if (entities_overlap(*proj, *player_)) {
+                proj->alive = false;
+                player_->damage(proj->damage_amount);
+                invuln_timer_ = kInvulnDuration;
+                if (!player_->alive) game_over_ = true;
                 break;
             }
         }
@@ -805,6 +946,18 @@ void Game::render() {
         SDL_RenderPresent(renderer_);
         return;
     }
+    if (state_ == GameState::CharacterSelect) {
+        menu_.render(font_, "SELECT CHARACTER", ww, wh);
+        // Live preview of the highlighted character, idle-walking in place.
+        // Placed below the menu list so it never overlaps the items.
+        const int idx = std::clamp(menu_.selected_index(), 0, 2);
+        const float preview_t = static_cast<float>(SDL_GetTicks()) / 1000.0f;
+        draw_iso_character(renderer_, ww * 0.5f, wh * 0.82f, 80.0f, 80.0f,
+                           0.0f, -1.0f, preview_t * 6.0f,
+                           character_style(idx), nullptr, 0.0f);
+        SDL_RenderPresent(renderer_);
+        return;
+    }
     if (state_ == GameState::Options) {
         menu_.render(font_, "OPTIONS", ww, wh);
         SDL_RenderPresent(renderer_);
@@ -853,6 +1006,11 @@ void Game::render() {
                                static_cast<Uint8>(a * 255.0f));
         SDL_RenderFillRect(renderer_, nullptr);
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    }
+
+    if (!pending_capture_.empty()) {
+        capture_screenshot_to(pending_capture_);
+        pending_capture_.clear();
     }
 
     SDL_RenderPresent(renderer_);
@@ -966,6 +1124,7 @@ void Game::reset() {
     player->play_animation("idle");
     player_ = player.get();
     apply_gun_textures(*player_);
+    player_->set_style(character_style(selected_character_));
     entities_.push_back(std::move(player));
     update_camera();
 }
@@ -1018,6 +1177,63 @@ void Game::update_camera() {
                            0.0f, max_x);
     camera_.y = std::clamp(player_->pos.y - static_cast<float>(kViewHeight) * 0.5f,
                            0.0f, max_y);
+}
+
+bool Game::line_of_solid_clear(float ax, float ay, float bx, float by) const {
+    // March from a to b in small steps; if any sample lands inside a solid
+    // tile, the sight line is blocked. (No tilemap -> always clear.)
+    const float dx = bx - ax;
+    const float dy = by - ay;
+    const float dist = std::sqrt(dx * dx + dy * dy);
+    if (dist < 1.0f) return true;
+    constexpr float kStep = 8.0f;
+    const float nx = dx / dist;
+    const float ny = dy / dist;
+    const int steps = std::max(1, static_cast<int>(dist / kStep));
+    for (int i = 0; i <= steps; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(steps);
+        const float px = ax + nx * dist * t;
+        const float py = ay + ny * dist * t;
+        if (tilemap_.loaded() && tilemap_.is_solid(px, py)) return false;
+    }
+    return true;
+}
+
+void Game::update_devil_ranged_attacks(float dt, const GameContext& ctx) {
+    if (!player_ || !player_->alive || transition_timer_ > 0.0f) return;
+    // Devils fire a fireball at the player when within direct line of sight at
+    // <= kDevilFireRange px, on a per-devil cooldown.
+    constexpr float kDevilFireRange = 50.0f;
+    constexpr float kDevilFireCooldown = 1.4f;
+    constexpr float kFireballSpeed = 260.0f;
+    // Collect new fireballs and add them AFTER the loop: pushing into
+    // entities_ while iterating it would invalidate iterators (UB/segfault).
+    std::vector<std::unique_ptr<Entity>> spawned;
+    for (auto& e : entities_) {
+        auto* en = dynamic_cast<Enemy*>(e.get());
+        if (!en || !en->alive) continue;
+        if (en->kind() != EnemyKind::Devil) continue;
+        en->tick_ranged_cooldown(dt);
+        if (en->ranged_cooldown() > 0.0f) continue;
+        const float ddx = player_->pos.x - en->pos.x;
+        const float ddy = player_->pos.y - en->pos.y;
+        const float dist = std::sqrt(ddx * ddx + ddy * ddy);
+        if (dist <= 0.001f || dist > kDevilFireRange) continue;
+        // Direct sight line: nothing solid between the devil and the player.
+        if (!line_of_solid_clear(en->pos.x, en->pos.y,
+                                player_->pos.x, player_->pos.y)) {
+            continue;
+        }
+        const float nx = ddx / dist;
+        const float ny = ddy / dist;
+        auto fb = std::make_unique<Projectile>(
+            en->pos.x, en->pos.y, nx * kFireballSpeed, ny * kFireballSpeed, 1);
+        fb->hostile = true;
+        fb->set_texture(fireball_tex_.get());
+        spawned.push_back(std::move(fb));
+        en->reset_ranged_cooldown(kDevilFireCooldown);
+    }
+    for (auto& s : spawned) entities_.push_back(std::move(s));
 }
 
 void Game::load_current_tilemap() {

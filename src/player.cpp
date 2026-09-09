@@ -121,17 +121,9 @@ void Player::update(float dt, const GameContext& ctx) {
 
 void Player::render(SDL_Renderer* r, float cam_x, float cam_y) const {
     // Isometric character: shaded 3D box body + head that yaws to face the aim
-    // direction, animated legs, and the current gun drawn in the hand.
-    const IsoCharStyle style{
-        SDL_Color{120, 190, 255, 255},  // body top (lightest)
-        SDL_Color{60, 160, 255, 255},   // body front
-        SDL_Color{40, 110, 200, 255},   // body side (dark)
-        SDL_Color{150, 205, 255, 255},  // head top
-        SDL_Color{80, 170, 255, 255},   // head front
-        SDL_Color{50, 120, 210, 255},   // head side
-        SDL_Color{50, 50, 70, 255},     // legs
-        SDL_Color{0, 0, 0, 90},        // shadow
-    };
+    // direction, animated legs, and the current gun drawn in the hand. The
+    // palette comes from the character-select screen (default blue).
+    const IsoCharStyle style = style_;
     draw_iso_character(r, pos.x - cam_x, pos.y + size.y * 0.25f - cam_y, size.x, size.y,
                        facing_.x, facing_.y, walk_phase_, style,
                        current_gun_texture(), gun_angle_);

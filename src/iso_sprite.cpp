@@ -132,13 +132,13 @@ void draw_iso_character(SDL_Renderer* r, float cx, float cy, float w, float h,
     // Body footprint + standing height.
     const float hw = w * 0.5f;
     const float hd = w * 0.4f;
-    const float bh = h * 0.6f;          // body height
-    const float head_h = h * 0.4f;      // head height
-    const float head_hw = w * 0.28f;
-    const float head_hd = w * 0.24f;
-    const float leg_hw = w * 0.14f;
-    const float leg_hd = w * 0.12f;
-    const float leg_h = h * 0.5f;
+    const float leg_h = h * 0.4f;        // leg height (feet -> hips)
+    const float bh = h * 0.5f;           // body height (hips -> shoulders)
+    const float head_h = h * 0.32f;      // head height
+    const float head_hw = w * 0.26f;
+    const float head_hd = w * 0.22f;
+    const float leg_hw = w * 0.19f;
+    const float leg_hd = w * 0.16f;
 
     // World yaw that points the body's front toward the screen facing dir.
     const float yaw =
@@ -148,52 +148,50 @@ void draw_iso_character(SDL_Renderer* r, float cx, float cy, float w, float h,
     fill_ellipse(r, cx, cy + hd * 0.25f, hw * 1.25f, hd * 0.7f,
                 SDL_Color{0, 0, 0, 130});
 
-    // Body box (base at z=0, rises to bh).
+    // Legs drawn FIRST so the body covers the hips; only the lower legs +
+    // feet show below the torso. Each leg is a thin box planted on the ground
+    // (full height, no shrink) whose foot strides forward/back along the
+    // facing direction and lifts only while swinging forward through the air.
+    // One leg swings while the other bears weight -> reads as a real walk
+    // cycle instead of a synchronized hop.
+    const float phase0 = std::sin(walk_phase);
+    const float phase1 = std::sin(walk_phase + kPi);
+    const float stride = hd * 1.5f;       // forward/back foot travel (pokes beyond body)
+    const float lift_amt = leg_h * 0.4f;   // foot lift during the swing phase
+    const float leg_off = hw * 0.55f;      // left/right of body center
+    for (int s = 0; s < 2; ++s) {
+        const float ph = (s == 0) ? phase0 : phase1;
+        const float phc = (s == 0) ? walk_phase : walk_phase + kPi;
+        // Foot travels forward/back with cos(); lifts only while swinging
+        // forward (sin < 0), planted (lift 0) while bearing weight.
+        const float fwd = stride * std::cos(phc);
+        const float lift = std::max(0.0f, -ph) * lift_amt;
+        Box leg{};
+        leg.cxw = (s == 0 ? leg_off : -leg_off);
+        leg.cyw = fwd;        // stride forward/back under the body
+        leg.czw = lift;       // foot lifts off the ground during the swing
+        leg.hw = leg_hw;
+        leg.hd = leg_hd;
+        leg.hh = leg_h;       // full height — the leg never shrinks/hops
+        draw_box(r, cx, cy, leg, yaw, style.leg, style.leg, style.leg);
+    }
+
+    // Body box sits on top of the legs (base at the hip line).
     Box body{};
     body.cxw = 0.0f;
     body.cyw = 0.0f;
-    body.czw = 0.0f;
+    body.czw = leg_h;
     body.hw = hw;
     body.hd = hd;
     body.hh = bh;
     draw_box(r, cx, cy, body, yaw, style.body_top, style.body_front,
              style.body_side);
 
-    // Legs: two small boxes poking out in front of the body base. They swing
-    // forward/back out of phase (one strides forward while the other trails)
-    // and lift/lower out of phase, so it reads as a walk cycle instead of a
-    // synchronized hop. Drawn after the body so they read in front.
-    //
-    // phase0 = sin(walk_phase); phase1 = sin(walk_phase + pi) = -phase0, so the
-    // two legs are always exactly opposite — no abs() (that collapsed them to
-    // the same height and made both legs hop together).
-    const float phase0 = std::sin(walk_phase);
-    const float phase1 = std::sin(walk_phase + kPi);
-    const float stride = hd * 0.45f;  // forward/back swing distance
-    // Height: taller = planted/extended, shorter = lifted/swinging. Clamp so a
-    // leg never disappears entirely.
-    const float leg_z[2] = {
-        std::max(0.2f, leg_h * (0.55f + 0.45f * phase0)),
-        std::max(0.2f, leg_h * (0.55f + 0.45f * phase1)),
-    };
-    const float leg_stride[2] = {stride * std::cos(walk_phase),
-                                 stride * std::cos(walk_phase + kPi)};
-    const float leg_off = hw * 0.5f;
-    for (int s = 0; s < 2; ++s) {
-        Box leg{};
-        leg.cxw = (s == 0 ? leg_off : -leg_off);
-        leg.cyw = hd * 1.15f + leg_stride[s];  // swing forward/back
-        leg.czw = 0.0f;
-        leg.hw = leg_hw;
-        leg.hd = leg_hd;
-        leg.hh = leg_z[s];
-        draw_box(r, cx, cy, leg, yaw, style.leg, style.leg, style.leg);
-    }
     // Head box on top of the body.
     Box head{};
     head.cxw = 0.0f;
     head.cyw = -hd * 0.1f;
-    head.czw = bh;
+    head.czw = leg_h + bh;
     head.hw = head_hw;
     head.hd = head_hd;
     head.hh = head_h;
@@ -203,7 +201,7 @@ void draw_iso_character(SDL_Renderer* r, float cx, float cy, float w, float h,
     // Gun in the hand, at shoulder height, rotated to the exact aim angle.
     if (gun_tex && gun_tex->get()) {
         const SDL_FPoint hand3 =
-            project(Pt3{hw * 0.6f, -hd * 0.2f, bh * 0.9f}, cx, cy);
+            project(Pt3{hw * 0.6f, -hd * 0.2f, leg_h + bh * 0.9f}, cx, cy);
         const double angle_deg = gun_angle_rad * 180.0 / kPi;
         const float scale = 1.25f;
         const float gw = static_cast<float>(gun_tex->w()) * scale;
