@@ -18,11 +18,11 @@ public:
     explicit Player(float x, float y);
 
     // --- Inventory ---------------------------------------------------------
-    // Three fixed slots indexed by WeaponKind: [Pistol, Shotgun, MachineGun].
+    // One slot per WeaponKind, in enum order, bound to number keys 1..N.
     // The pistol is always owned with infinite ammo. Acquired weapons persist
     // in the inventory even when empty (shown greyed in the HUD); the player can
     // always fall back to the pistol.
-    static constexpr int kSlotCount = 3;
+    static constexpr int kSlotCount = static_cast<int>(WeaponKind::Count);
 
     bool owns(WeaponKind k) const { return owned_[static_cast<int>(k)]; }
     int ammo(WeaponKind k) const { return ammo_[static_cast<int>(k)]; }
@@ -77,8 +77,9 @@ public:
 private:
     IsoCharStyle style_{};  // skin/hair/shirt/pants palette (character skin)
     float speed_;
-    bool owned_[kSlotCount] = {true, false, false};
-    int ammo_[kSlotCount] = {-1, 0, 0};   // -1 = infinite
+    bool owned_[kSlotCount] = {true};   // rest default to false
+
+    int ammo_[kSlotCount] = {-1};        // pistol infinite, rest empty
     WeaponKind current_ = WeaponKind::Pistol;
 
     Texture* gun_tex_[kSlotCount] = {};

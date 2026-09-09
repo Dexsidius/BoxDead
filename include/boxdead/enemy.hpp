@@ -12,6 +12,7 @@
 
 #include "boxdead/animated_entity.hpp"
 
+#include <algorithm>
 #include <string>
 
 namespace bd {
@@ -32,6 +33,17 @@ public:
     float fire_interval() const;   // seconds between volleys
     int fire_count() const;        // fireballs per volley
     float fire_spread_deg() const; // cone the volley is spread across
+
+    // --- Crowd control -----------------------------------------------------
+    // A concussion blast freezes an enemy in place; a lure blast makes it walk
+    // to a point instead of chasing the player. Both simply run down a timer.
+    void stun(float seconds) { stun_ = std::max(stun_, seconds); }
+    bool stunned() const { return stun_ > 0.0f; }
+    void lure_to(Vec2 point, float seconds) {
+        lure_pos_ = point;
+        lure_ = std::max(lure_, seconds);
+    }
+    bool lured() const { return lure_ > 0.0f; }
 
     float ranged_cooldown() const { return ranged_cd_; }
     void reset_ranged_cooldown(float cd) { ranged_cd_ = cd; }
@@ -57,7 +69,10 @@ private:
     std::string name_;
     float walk_phase_ = 0.0f;
     float ranged_cd_ = 0.0f;
-    Vec2 facing_{0.0f, 1.0f};  // toward the player
+    float stun_ = 0.0f;
+    float lure_ = 0.0f;
+    Vec2 lure_pos_{};
+    Vec2 facing_{0.0f, 1.0f};  // toward whatever it is walking at
 };
 
 }  // namespace bd

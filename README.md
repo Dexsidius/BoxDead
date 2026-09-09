@@ -97,9 +97,39 @@ count, spread cone, speed, damage, ammo) is looked up from a `WeaponKind`.
 spread of projectiles in one path, so adding a weapon is just a new enum entry
 plus a spec.
 
-- **Pistol** — infinite ammo, 1 projectile, fast cooldown.
-- **Shotgun** — 6 rounds, 5-projectile spread.
-- **Machine Gun** — 30 rounds, rapid single shots.
+Seven slots, bound to keys 1-7 in order. Ammo is finite on everything but the
+pistol, and running a weapon dry drops you back to it.
+
+| Slot | Weapon | Ammo | Notes |
+| --- | --- | --- | --- |
+| 1 | Pistol | inf | 1 shot, fast cooldown |
+| 2 | Shotgun | 6 | 5 pellets across a 24 degree cone |
+| 3 | Machine Gun | 30 | rapid single shots |
+| 4 | Rocket Launcher | 5 | 3 direct + **8 damage in 130px**, detonates on contact |
+| 5 | Grenade | 6 | thrown, ~1.1s fuse, 5 damage in 105px |
+| 6 | Concussion | 4 | thrown, 1 damage in 135px, **freezes enemies for 3s** |
+| 7 | Lure Grenade | 4 | thrown, pulls enemies from 300px, then a small 2 damage / 60px pop |
+
+The explosives are described by the same `WeaponSpec` as the bullets rather
+than by a subclass: a shot carries a payload, and `blast_radius > 0` is what
+makes it explode, so there is still one firing path. A `fuse > 0` makes the
+shot *thrown* -- it drags to a stop and detonates on the timer, bouncing off
+walls and bodies on the way -- while a zero fuse detonates on first contact.
+
+The blast itself is one function (`Game::explode`) shared by barrels, rockets
+and every grenade: it damages enemies and the player inside the radius, applies
+stun or lure where the payload asks for it, chains into other barrels, and
+spawns the fireball.
+
+**The lure is deliberately not a bomb.** Its lure radius (300px) is five times
+its kill radius (60px), so it gathers a crowd that its own blast cannot wipe
+out -- it sets a group up for something else rather than being a better
+grenade. Ranked by blast damage: rocket 8 > barrel 5 = grenade 5 > lure 2 >
+concussion 1.
+
+Enemies caught by a concussion are frozen for three seconds -- no movement, no
+fireballs -- and tint pale blue so you can see which ones are held. Lured
+enemies walk to the blast point instead of at you until the lure expires.
 
 Items drop from killed enemies (≈25% chance) and also spawn on the floor
 every few seconds (up to 3 at once). A toast message flashes near the top when
@@ -149,7 +179,7 @@ to use real BMP assets (add SDL_image for PNG/JPG).
 - **WASD** or **Arrow keys** - move the player
 - **Mouse** - aim
 - **Space** or **Left mouse** - fire
-- **1 / 2 / 3** - switch to Pistol / Shotgun / Machine Gun (owned weapons only)
+- **1** - **7** - switch to a weapon slot (owned weapons only)
 - **Q / E** - cycle to the previous / next owned weapon
 - **Up/Down** (or W/S) + **Enter** - navigate menus; mouse hover/click works too
 - **Esc** - back / quit (context-dependent)
@@ -257,6 +287,23 @@ the HUD lists every owned weapon, highlights the selected one, and greys out
 dry weapons. Running out of ammo on a finite weapon auto-switches back to the
 Pistol so you are never stuck. The aim mode (Face Mouse vs Face Movement) can
 be toggled in the Options menu.
+
+## Shooting and aiming
+
+Shots collide with the level. A projectile steps its movement in increments of
+at most 8px so a fast round cannot tunnel through a 32px wall in one frame;
+bullets die on the wall, rockets detonate against it, and thrown charges drop
+where they bounce and keep counting down. Only *tile* solidity stops a shot --
+barrels are handled by the overlap pass instead, so shooting one damages it
+rather than the bullet stopping dead against an obstacle it never hurt.
+
+The game draws its own crosshair in place of the system cursor, and a laser
+sight from the muzzle showing exactly where the current weapon will put its
+shots. For a spread weapon the sight draws **both edges of the cone plus the
+centre line**, so switching to the shotgun visibly fans the sight out to its
+24 degrees and switching back narrows it to one line. Every ray is clipped by
+the same wall test the bullets use and marks the wall it stops on, so the sight
+never promises a shot the geometry will not allow.
 
 ## Explosive barrels
 
@@ -502,8 +549,8 @@ environments. The summary includes `enemy_frame` (a live enemy's current animati
 proving the animator ticks), `barrels` (how many barrels detonated), and
 `blast_kills` (enemies killed by explosions rather than bullets), `demons`
 (yellow demons spawned on the 5th-wave rolls) and `bosses` (level bosses
-spawned) and `wave_gate` (`OK`, or `LEAKED` if a wave ever began with enemies
-still alive). A run reporting `barrels=0` means the level's explosive tiles
+spawned) `blasts` (rockets and grenades that went off) and `wave_gate` (`OK`, or
+`LEAKED` if a wave ever began with enemies still alive). A run reporting `barrels=0` means the level's explosive tiles
 never loaded; `bosses=0` means the run was too short to reach a boss wave.
 
 The screenshot harness (`--screenshot <path>`) is the visual counterpart: it
@@ -523,6 +570,13 @@ g++ -std=c++20 -I include test_weapon.cpp src/player.cpp src/weapon.cpp \
     src/sprite.cpp src/texture.cpp src/iso_sprite.cpp src/tilemap.cpp \
     -lSDL3 -o test_weapon
 ./test_weapon
+
+# Projectiles: bullets stop on walls, rockets detonate on them, grenades
+# come to rest and go off on their fuse.
+g++ -std=c++20 -I include test_projectile.cpp src/projectile.cpp \
+    src/entity.cpp src/tilemap.cpp src/texture.cpp src/sprite.cpp \
+    -lSDL3 -o test_projectile
+SDL_VIDEO_DRIVER=dummy ./test_projectile
 
 # Tilemap loader: every scene .mx parses, yields tiles, and lists barrels.
 g++ -std=c++20 -I include -I /usr/include/SDL3 test_tilemap.cpp \

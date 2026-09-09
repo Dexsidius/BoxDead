@@ -34,6 +34,20 @@ constexpr float kItemSpawnInterval = 12.0f;  // seconds between floor item spawn
 constexpr int kMaxFloorItems = 3;
 
 const std::vector<std::string> kMainMenuItems = {"New Game", "Options", "Exit"};
+
+// Which weapon a pickup contains. Weighted so the workhorses turn up often and
+// the ordnance stays a treat: the rocket launcher is the rarest thing to find.
+WeaponKind random_weapon_drop() {
+    static const WeaponKind kTable[] = {
+        WeaponKind::Shotgun,    WeaponKind::Shotgun,   WeaponKind::Shotgun,
+        WeaponKind::MachineGun, WeaponKind::MachineGun, WeaponKind::MachineGun,
+        WeaponKind::Grenade,    WeaponKind::Grenade,
+        WeaponKind::Concussion, WeaponKind::Lure,
+        WeaponKind::RocketLauncher,
+    };
+    constexpr int n = sizeof(kTable) / sizeof(kTable[0]);
+    return kTable[std::rand() % n];
+}
 }  // namespace
 
 // Scene definitions: each map loads a LevelEdit++ ".mx" tileset and has a
@@ -122,9 +136,20 @@ bool Game::init() {
         renderer_, SDL_Color{70, 200, 230, 255}, 22);
 
     // In-hand gun sprites (side view, muzzle +x); one per weapon kind.
-    gun_hand_tex_[0] = make_gun_texture(renderer_, WeaponKind::Pistol);
-    gun_hand_tex_[1] = make_gun_texture(renderer_, WeaponKind::Shotgun);
-    gun_hand_tex_[2] = make_gun_texture(renderer_, WeaponKind::MachineGun);
+    for (int i = 0; i < Player::kSlotCount; ++i) {
+        gun_hand_tex_[i] =
+            make_gun_texture(renderer_, static_cast<WeaponKind>(i));
+    }
+    // Projectiles: rockets and grenades are bigger and colour-coded so a
+    // thrown charge is readable on the floor while its fuse burns.
+    rocket_tex_ = make_solid_sprite_texture(
+        renderer_, SDL_Color{240, 170, 60, 255}, 12);
+    grenade_tex_ = make_solid_sprite_texture(
+        renderer_, SDL_Color{96, 128, 72, 255}, 12);
+    concussion_tex_ = make_solid_sprite_texture(
+        renderer_, SDL_Color{92, 156, 220, 255}, 12);
+    lure_tex_ = make_solid_sprite_texture(
+        renderer_, SDL_Color{226, 190, 70, 255}, 12);
 
     if (!TTF_Init()) {
         std::cerr << "TTF_Init failed: " << SDL_GetError() << '\n';
@@ -160,6 +185,10 @@ bool Game::init() {
                   << " paths under " << base_dir << ")\n";
         return false;
     }
+
+    // The game draws its own crosshair, so the arrow pointer would just be a
+    // second, offset cursor on screen.
+    if (!smoke_test_ && !screenshot_mode_) SDL_HideCursor();
 
     std::srand(static_cast<unsigned>(std::time(nullptr)));
 
@@ -289,6 +318,13 @@ void Game::run() {
                 }
                 if (nearest) nearest->hit(Barrel::kMaxHealth);
             }
+            // For verification: hand the player a shotgun early so the aim
+            // overlay's spread cone is visible in the captures.
+            if (screenshot_mode_ && i == 8 && player_) {
+                player_->acquire_weapon(WeaponKind::Shotgun,
+                                        weapon_spec(WeaponKind::Shotgun).ammo);
+                player_->switch_to(WeaponKind::Shotgun);
+            }
             // For verification: pause near the end of the run (after every
             // other capture) so the pause overlay lands in a screenshot.
             if (screenshot_mode_ && i == 200) paused_ = true;
@@ -347,6 +383,9 @@ void Game::run() {
                       << " blast_kills=" << blast_kills_
                       << " demons=" << demons_spawned_
                       << " bosses=" << bosses_spawned_
+                      << " blasts=" << projectile_blasts_
+                      << " stunned=" << enemies_stunned_
+                      << " lured=" << enemies_lured_
                       << " wave_gate="
                       << (wave_gate_violations_ == 0 ? "OK" : "LEAKED")
                       << '\n';
@@ -430,9 +469,12 @@ void Game::process_input(bool& running) {
                 if (event.type == SDL_EVENT_KEY_DOWN) {
                     const SDL_Keycode k = event.key.key;
                     if (k == SDLK_P) paused_ = !paused_;
-                    else if (k == SDLK_1) player_->switch_to(WeaponKind::Pistol);
-                    else if (k == SDLK_2) player_->switch_to(WeaponKind::Shotgun);
-                    else if (k == SDLK_3) player_->switch_to(WeaponKind::MachineGun);
+                    // Number keys select inventory slots in enum order.
+                    else if (k >= SDLK_1 &&
+                             k < SDLK_1 + Player::kSlotCount) {
+                        player_->switch_to(
+                            static_cast<WeaponKind>(k - SDLK_1));
+                    }
                     else if (k == SDLK_Q) player_->cycle(-1);
                     else if (k == SDLK_E) player_->cycle(1);
                 }
@@ -609,6 +651,7 @@ void Game::update_player_aim(const GameContext& ctx) {
         float lx = 0.0f;
         float ly = 0.0f;
         SDL_RenderCoordinatesFromWindow(renderer_, mx, my, &lx, &ly);
+        cursor_view_ = Vec2{lx, ly};
         const float world_mx = lx + camera_.x;
         const float world_my = ly + camera_.y;
         dx = world_mx - player_->pos.x;
@@ -623,6 +666,12 @@ void Game::update_player_aim(const GameContext& ctx) {
         }
     }
     player_->set_facing(dx, dy);
+    if (smoke_test_ || screenshot_mode_) {
+        // No real pointer in the headless modes; park the crosshair on the aim
+        // line so screenshots show it where a player's mouse would be.
+        cursor_view_ = Vec2{player_->pos.x - camera_.x + dx * 220.0f,
+                            player_->pos.y - camera_.y + dy * 220.0f};
+    }
 }
 
 void Game::update(float dt) {
@@ -730,6 +779,8 @@ void Game::update(float dt) {
     // Barrels whose fuse burned out this frame blow up (and may light other
     // barrels, which detonate on their own fuse a moment later).
     update_barrels();
+    // Rockets that hit something and grenades whose fuse ran out.
+    update_projectile_blasts();
 
     // In smoke, record the highest enemy animation frame seen so the summary
     // proves the animator ticked even if every enemy dies before the run ends.
@@ -961,7 +1012,16 @@ void Game::fire_projectile(float dt, const GameContext& ctx) {
         auto proj = std::make_unique<Projectile>(
             player_->pos.x, player_->pos.y,
             dirx * w.projectile_speed, diry * w.projectile_speed, w.damage);
-        proj->set_texture(projectile_tex_.get());
+        proj->set_texture(projectile_tex_for(w.kind));
+        if (w.blast_radius > 0.0f) {
+            Payload load;
+            load.blast_radius = w.blast_radius;
+            load.blast_damage = w.blast_damage;
+            load.stun_seconds = w.stun_seconds;
+            load.lure_radius = w.lure_radius;
+            load.lure_seconds = w.lure_seconds;
+            proj->arm(load, w.fuse);
+        }
         entities_.push_back(std::move(proj));
     }
 }
@@ -976,8 +1036,8 @@ void Game::check_collisions() {
             auto* barrel = dynamic_cast<Barrel*>(b.get());
             if (!barrel || !barrel->alive) continue;
             if (entities_overlap(*proj, *barrel)) {
-                proj->alive = false;
-                barrel->hit(proj->damage_amount);
+                barrel->hit(std::max(1, proj->damage_amount));
+                proj->on_hit();  // rockets go off against the barrel
                 break;
             }
         }
@@ -986,6 +1046,9 @@ void Game::check_collisions() {
     // Projectile vs enemy: a player-fired (non-hostile) projectile is
     // destroyed and the enemy takes hit damage from the weapon. Dead enemies
     // may drop an item. Hostile (devil) fireballs ignore enemies.
+    // Drops are queued rather than spawned inline: maybe_drop_item() pushes
+    // into entities_, which would invalidate the loops walking it.
+    std::vector<Vec2> kill_drops;
     for (auto& a : entities_) {
         auto* proj = dynamic_cast<Projectile*>(a.get());
         if (!proj || !proj->alive || proj->hostile) continue;
@@ -993,17 +1056,21 @@ void Game::check_collisions() {
             auto* en = dynamic_cast<Enemy*>(b.get());
             if (!en || !en->alive) continue;
             if (entities_overlap(*proj, *en)) {
-                proj->alive = false;
+                // A thrown charge bounces off bodies and keeps its fuse; a
+                // bullet or rocket ends here.
+                if (proj->thrown()) continue;
                 const Vec2 drop_pos = en->pos;
-                en->damage(proj->damage_amount);
+                if (proj->damage_amount > 0) en->damage(proj->damage_amount);
+                proj->on_hit();
                 if (!en->alive) {
                     ++score_;  // count the kill
-                    maybe_drop_item(drop_pos);
+                    kill_drops.push_back(drop_pos);
                 }
                 break;
             }
         }
     }
+    for (const Vec2& p : kill_drops) maybe_drop_item(p);
 
     // Hostile projectile vs player: a devil fireball that hits the player deals
     // contact damage on the same invulnerability window as melee.
@@ -1012,7 +1079,7 @@ void Game::check_collisions() {
             auto* proj = dynamic_cast<Projectile*>(a.get());
             if (!proj || !proj->alive || !proj->hostile) continue;
             if (entities_overlap(*proj, *player_)) {
-                proj->alive = false;
+                proj->on_hit();
                 player_->damage(proj->damage_amount);
                 invuln_timer_ = kInvulnDuration;
                 if (!player_->alive) game_over_ = true;
@@ -1057,9 +1124,7 @@ void Game::maybe_drop_item(Vec2 pos) {
         entities_.push_back(std::move(it));
     } else if (r < 25) {
         // Only drop real upgrades, never the default pistol.
-        const WeaponKind kinds[2] = {WeaponKind::Shotgun,
-                                    WeaponKind::MachineGun};
-        const WeaponKind k = kinds[std::rand() % 2];
+        const WeaponKind k = random_weapon_drop();
         const int ammo = weapon_spec(k).ammo;
         auto it = std::make_unique<WeaponPickup>(pos.x, pos.y, k, ammo);
         it->set_texture(weapon_pickup_tex(k));
@@ -1089,9 +1154,7 @@ void Game::spawn_floor_item(const GameContext& ctx) {
         it->set_texture(health_tex_.get());
         entities_.push_back(std::move(it));
     } else {
-        const WeaponKind kinds[2] = {WeaponKind::Shotgun,
-                                      WeaponKind::MachineGun};
-        const WeaponKind k = kinds[std::rand() % 2];
+        const WeaponKind k = random_weapon_drop();
         const int ammo = weapon_spec(k).ammo;
         auto it = std::make_unique<WeaponPickup>(x, y, k, ammo);
         it->set_texture(weapon_pickup_tex(k));
@@ -1106,9 +1169,14 @@ void Game::spawn_item_on_player() {
         it->set_texture(health_tex_.get());
         entities_.push_back(std::move(it));
     } else {
-        const WeaponKind kinds[2] = {WeaponKind::Shotgun,
-                                    WeaponKind::MachineGun};
-        const WeaponKind k = kinds[std::rand() % 2];
+        // Cycle deterministically through every weapon but the pistol rather
+        // than rolling the drop table: the point of this path is that a
+        // headless run exercises *all* of them, including the grenades whose
+        // stun and lure the summary reports on.
+        static int next_kind = 1;
+        const WeaponKind k = static_cast<WeaponKind>(next_kind);
+        next_kind = next_kind + 1;
+        if (next_kind >= Player::kSlotCount) next_kind = 1;
         const int ammo = weapon_spec(k).ammo;
         auto it =
             std::make_unique<WeaponPickup>(player_->pos.x, player_->pos.y,
@@ -1122,6 +1190,10 @@ Texture* Game::weapon_pickup_tex(WeaponKind k) {
     switch (k) {
         case WeaponKind::Shotgun: return weapon_tex_shotgun_.get();
         case WeaponKind::MachineGun: return weapon_tex_machinegun_.get();
+        case WeaponKind::RocketLauncher: return rocket_tex_.get();
+        case WeaponKind::Grenade: return grenade_tex_.get();
+        case WeaponKind::Concussion: return concussion_tex_.get();
+        case WeaponKind::Lure: return lure_tex_.get();
         case WeaponKind::Pistol:
         default: return weapon_tex_pistol_.get();
     }
@@ -1199,6 +1271,10 @@ void Game::render() {
     }
 
     if (flashing) player_->set_color_override(SDL_Color{255, 255, 255, 255});
+
+    // Aim ray + crosshair sit above the world but below the HUD, and are
+    // pointless while the world is frozen or the run is over.
+    if (state_ == GameState::Playing && !paused_) render_aim_overlay();
 
     render_hud();
 
@@ -1301,14 +1377,14 @@ void Game::render_hud() {
     // Inventory: one row per owned weapon slot. The selected weapon is
     // highlighted; empty (finite) weapons are dimmed. Keys 1/2/3 select,
     // Q/E cycle.
-    static const char* kSlotKey[3] = {"1", "2", "3"};
+    // Slot keys are 1..N in enum order.
     float iy = 64.0f;
     for (int i = 0; i < Player::kSlotCount; ++i) {
         const WeaponKind wk = static_cast<WeaponKind>(i);
         if (!player_->owns(wk)) continue;  // hide unowned slots
         const std::string name = weapon_spec(wk).name;
         const int ammo = player_->ammo(wk);
-        std::string label = std::string("[") + kSlotKey[i] + "] " + name;
+        std::string label = "[" + std::to_string(i + 1) + "] " + name;
         if (ammo < 0) label += " (inf)";
         else if (ammo == 0) label += " (empty)";
         else label += " x" + std::to_string(ammo);
@@ -1369,6 +1445,9 @@ void Game::reset() {
     demons_spawned_ = 0;
     bosses_spawned_ = 0;
     wave_gate_violations_ = 0;
+    projectile_blasts_ = 0;
+    enemies_stunned_ = 0;
+    enemies_lured_ = 0;
     pickup_toast_timer_ = 0.0f;
     pickup_toast_.clear();
     paused_ = false;
@@ -1487,7 +1566,7 @@ void Game::update_enemy_ranged_attacks(float dt, const GameContext& ctx) {
     std::vector<std::unique_ptr<Entity>> spawned;
     for (auto& e : entities_) {
         auto* en = dynamic_cast<Enemy*>(e.get());
-        if (!en || !en->alive || !en->can_shoot()) continue;
+        if (!en || !en->alive || !en->can_shoot() || en->stunned()) continue;
         en->tick_ranged_cooldown(dt);
         if (en->ranged_cooldown() > 0.0f) continue;
         const float ddx = player_->pos.x - en->pos.x;
@@ -1521,6 +1600,106 @@ void Game::update_enemy_ranged_attacks(float dt, const GameContext& ctx) {
         en->reset_ranged_cooldown(en->fire_interval());
     }
     for (auto& s : spawned) entities_.push_back(std::move(s));
+}
+
+float Game::ray_distance(float x, float y, float dx, float dy,
+                         float max_dist) const {
+    if (!tilemap_.loaded()) return max_dist;
+    // March in short steps; the tiles are 32px so 6px never skips one.
+    constexpr float kStep = 6.0f;
+    for (float t = kStep; t <= max_dist; t += kStep) {
+        if (tilemap_.is_solid(x + dx * t, y + dy * t)) return t - kStep;
+    }
+    return max_dist;
+}
+
+void Game::render_aim_overlay() {
+    if (!player_ || !player_->alive) return;
+    const WeaponSpec w = player_->current_weapon();
+    const Vec2 aim = player_->facing();
+
+    // Rays start at the gun hand rather than the player's centre so the line
+    // leaves the muzzle instead of the character's chest.
+    const float ox = player_->pos.x - camera_.x + aim.x * 16.0f;
+    const float oy = player_->pos.y - camera_.y + aim.y * 16.0f - 6.0f;
+    const float wx = player_->pos.x + aim.x * 16.0f;
+    const float wy = player_->pos.y + aim.y * 16.0f;
+    constexpr float kMaxRay = 560.0f;
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+    // One ray down the middle, plus one along each edge of the spread cone so
+    // the shotgun visibly fans out and the pistol reads as a single line.
+    const float half = w.spread_degrees * 0.5f * (static_cast<float>(M_PI) / 180.0f);
+    struct Ray {
+        float angle;
+        Uint8 alpha;
+    };
+    const bool spread = (w.projectile_count > 1 && w.spread_degrees > 0.0f);
+    const Ray rays[3] = {{0.0f, static_cast<Uint8>(spread ? 110 : 190)},
+                        {-half, 200},
+                        {half, 200}};
+    const int ray_count = spread ? 3 : 1;
+
+    for (int i = 0; i < ray_count; ++i) {
+        const float ca = std::cos(rays[i].angle);
+        const float sa = std::sin(rays[i].angle);
+        const float dx = aim.x * ca - aim.y * sa;
+        const float dy = aim.x * sa + aim.y * ca;
+        const float len = ray_distance(wx, wy, dx, dy, kMaxRay);
+        // Drawn as fading segments so the line reads as a laser sight that
+        // trails off rather than a hard-edged stick.
+        constexpr int kSegs = 14;
+        for (int seg = 0; seg < kSegs; ++seg) {
+            const float t0 = len * seg / kSegs;
+            const float t1 = len * (seg + 1) / kSegs;
+            // Linear falloff: a squared fade made the far half of a 560px
+            // ray invisible, which read as the sight being far too short.
+            const float fade = 1.0f - 0.75f * static_cast<float>(seg) / kSegs;
+            const Uint8 a = static_cast<Uint8>(rays[i].alpha * fade);
+            if (a < 6) continue;
+            SDL_SetRenderDrawColor(renderer_, 255, 90, 70, a);
+            SDL_RenderLine(renderer_, ox + dx * t0, oy + dy * t0,
+                          ox + dx * t1, oy + dy * t1);
+        }
+        // A brighter pip where the ray stops, so a wall hit is obvious.
+        if (len < kMaxRay) {
+            SDL_SetRenderDrawColor(renderer_, 255, 170, 120, 150);
+            const SDL_FRect hit{ox + dx * len - 2.0f, oy + dy * len - 2.0f,
+                                4.0f, 4.0f};
+            SDL_RenderFillRect(renderer_, &hit);
+        }
+    }
+
+    // Crosshair, drawn in place of the system cursor (which init() hides).
+    const float cx = cursor_view_.x;
+    const float cy = cursor_view_.y;
+    constexpr float gap = 5.0f;
+    constexpr float arm = 11.0f;
+    // Dark backing first so the crosshair stays visible on light floors.
+    // Three passes: a dark 3px backing so the crosshair survives light floors,
+    // then the bright arms drawn 2px thick.
+    for (int pass = 0; pass < 3; ++pass) {
+        float o = 0.0f;
+        if (pass == 0) {
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 190);
+            o = 1.0f;
+        } else if (pass == 1) {
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 190);
+            o = -1.0f;
+        } else {
+            SDL_SetRenderDrawColor(renderer_, 255, 244, 228, 255);
+        }
+        SDL_RenderLine(renderer_, cx - gap - arm + o, cy + o, cx - gap + o, cy + o);
+        SDL_RenderLine(renderer_, cx + gap + o, cy + o, cx + gap + arm + o, cy + o);
+        SDL_RenderLine(renderer_, cx + o, cy - gap - arm + o, cx + o, cy - gap + o);
+        SDL_RenderLine(renderer_, cx + o, cy + gap + o, cx + o, cy + gap + arm + o);
+    }
+    SDL_SetRenderDrawColor(renderer_, 255, 96, 74, 255);
+    const SDL_FRect dot{cx - 1.5f, cy - 1.5f, 3.0f, 3.0f};
+    SDL_RenderFillRect(renderer_, &dot);
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
 }
 
 void Game::render_boss_bar() {
@@ -1601,9 +1780,14 @@ void Game::update_barrels() {
 }
 
 void Game::detonate(Vec2 pos) {
-    constexpr float kRadius = Barrel::kBlastRadius;
+    explode(pos, Barrel::kBlastRadius, Barrel::kBlastDamage, 0.0f, 0.0f, 0.0f);
+}
+
+void Game::explode(Vec2 pos, float radius, int damage, float stun_seconds,
+                   float lure_radius, float lure_seconds) {
     constexpr int kPlayerBlastDamage = 1;
-    const float r2 = kRadius * kRadius;
+    const float r2 = radius * radius;
+    const float lure_r2 = lure_radius * lure_radius;
 
     // Item drops are queued: dropping inside the sweep would push into
     // entities_ while it is being iterated.
@@ -1612,24 +1796,39 @@ void Game::detonate(Vec2 pos) {
         if (!e->alive || e.get() == player_) continue;
         const float dx = e->pos.x - pos.x;
         const float dy = e->pos.y - pos.y;
-        if (dx * dx + dy * dy > r2) continue;
+        const float d2 = dx * dx + dy * dy;
+
         if (auto* en = dynamic_cast<Enemy*>(e.get())) {
-            en->damage(Barrel::kBlastDamage);
-            if (!en->alive) {
-                ++score_;
-                ++blast_kills_;
-                drops.push_back(en->pos);
+            // The lure reaches much further than the blast: it gathers a crowd
+            // that the small explosion deliberately does not wipe out.
+            if (lure_seconds > 0.0f && d2 <= lure_r2) {
+                en->lure_to(pos, lure_seconds);
+                ++enemies_lured_;
+            }
+            if (d2 > r2) continue;
+            if (stun_seconds > 0.0f) {
+                en->stun(stun_seconds);
+                ++enemies_stunned_;
+            }
+            if (damage > 0) {
+                en->damage(damage);
+                if (!en->alive) {
+                    ++score_;
+                    ++blast_kills_;
+                    drops.push_back(en->pos);
+                }
             }
         } else if (auto* b = dynamic_cast<Barrel*>(e.get())) {
+            if (d2 > r2) continue;
             // Chain reaction: a caught barrel lights its own fuse and goes up
             // a fraction of a second later, walking the blast down a row.
             b->hit(Barrel::kMaxHealth);
         }
     }
 
-    // The player is not immune to their own bomb, but the blast respects the
-    // normal i-frame window so a chain never deletes the whole health bar.
-    if (player_ && player_->alive && invuln_timer_ <= 0.0f) {
+    // The player is not immune to their own ordnance, but the blast respects
+    // the normal i-frame window so a chain never deletes the whole health bar.
+    if (player_ && player_->alive && invuln_timer_ <= 0.0f && damage > 0) {
         const float dx = player_->pos.x - pos.x;
         const float dy = player_->pos.y - pos.y;
         if (dx * dx + dy * dy <= r2) {
@@ -1640,7 +1839,28 @@ void Game::detonate(Vec2 pos) {
     }
 
     for (const Vec2& p : drops) maybe_drop_item(p);
-    entities_.push_back(std::make_unique<Explosion>(pos.x, pos.y, kRadius));
+    entities_.push_back(std::make_unique<Explosion>(pos.x, pos.y, radius));
+}
+
+void Game::update_projectile_blasts() {
+    // Same two-phase shape as update_barrels(): collect first, detonate after,
+    // because explode() adds entities.
+    struct Blast {
+        Vec2 pos;
+        Payload load;
+    };
+    std::vector<Blast> blasts;
+    for (auto& e : entities_) {
+        auto* p = dynamic_cast<Projectile*>(e.get());
+        if (!p || !p->alive || !p->blast_pending) continue;
+        p->alive = false;
+        blasts.push_back({p->pos, p->payload});
+    }
+    projectile_blasts_ += static_cast<int>(blasts.size());
+    for (const Blast& b : blasts) {
+        explode(b.pos, b.load.blast_radius, b.load.blast_damage,
+                b.load.stun_seconds, b.load.lure_radius, b.load.lure_seconds);
+    }
 }
 
 void Game::load_current_tilemap() {
@@ -1662,9 +1882,19 @@ void Game::load_current_tilemap() {
 }
 
 void Game::apply_gun_textures(Player& p) {
-    p.set_gun_texture(WeaponKind::Pistol, gun_hand_tex_[0].get());
-    p.set_gun_texture(WeaponKind::Shotgun, gun_hand_tex_[1].get());
-    p.set_gun_texture(WeaponKind::MachineGun, gun_hand_tex_[2].get());
+    for (int i = 0; i < Player::kSlotCount; ++i) {
+        p.set_gun_texture(static_cast<WeaponKind>(i), gun_hand_tex_[i].get());
+    }
+}
+
+Texture* Game::projectile_tex_for(WeaponKind k) {
+    switch (k) {
+        case WeaponKind::RocketLauncher: return rocket_tex_.get();
+        case WeaponKind::Grenade: return grenade_tex_.get();
+        case WeaponKind::Concussion: return concussion_tex_.get();
+        case WeaponKind::Lure: return lure_tex_.get();
+        default: return projectile_tex_.get();
+    }
 }
 
 void Game::capture_screenshot() { capture_screenshot_to(screenshot_path_); }
@@ -1695,6 +1925,10 @@ void Game::shutdown() {
     weapon_tex_shotgun_.reset();
     weapon_tex_machinegun_.reset();
     for (auto& g : gun_hand_tex_) g.reset();
+    rocket_tex_.reset();
+    grenade_tex_.reset();
+    concussion_tex_.reset();
+    lure_tex_.reset();
     if (renderer_) {
         SDL_DestroyRenderer(renderer_);
         renderer_ = nullptr;
