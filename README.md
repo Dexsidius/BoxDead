@@ -49,6 +49,16 @@ deal contact damage; the player has 5 HP shown in a health bar. Pick up items
 (weapons and consumables) by walking over them. When health hits zero, the
 game ends with a GAME OVER screen — press R to restart or Esc for the menu.
 
+## Character select
+
+Between **New Game** and spawning in, a **SELECT CHARACTER** screen lets you
+pick one of three playable survivors, each with its own color palette: Blue
+Survivor, Green Ranger, or Red Brawler. A live isometric preview of the
+highlighted character idle-walks below the menu so you can see the palette
+before you commit. Navigate with Up/Down (or W/S), confirm with Enter/Space,
+or click an entry directly; pick Back to return to the main menu. The chosen
+palette is applied to the player on spawn.
+
 ## Items, weapons, and consumables
 
 Items are static pickups collected on contact. The `Item` base exposes a
@@ -160,15 +170,21 @@ with a tie and blood, and two legs running a 4-phase walk):
   red tie and blood splatter. 1 HP, speed 120 px/s. Spawns every wave.
 - **Red Devil** — the special enemy. Red skin, dark red body, two horns.
   Inherits the zombie's behavior (same speed and chase AI) but is tougher at
-  2 HP. Starts appearing from wave 2 onward (25% chance per spawn).
+  2 HP. Starts appearing from wave 2 onward (25% chance per spawn). **Devils
+  also fire fireballs**: when a devil has a direct line of sight to the player
+  at 50px or less (no solid tile between them), it lobs an orange fireball
+  toward the player on a per-devil cooldown. A fireball that hits the player
+  deals contact damage on the same invulnerability window as a melee hit.
 
 ## Isometric characters
 
 Characters (player and enemies) render as isometric 3D box figures drawn
 per frame with `SDL_RenderGeometry`. Each figure has a ground shadow, two
-animated legs (alternating height with the walk cycle), a torso with three
-shaded faces (top / front / side), and a head. The body rotates to face the
-aim direction (8-way yaw) so the visible faces track where the character is
+animated legs that stride forward/back under the body (feet poke out beyond
+the torso and lift during the swing phase, alternating left/right so it reads
+as a real walk cycle instead of a hop), a torso with three shaded faces (top /
+front / side) sitting on top of the legs, and a head. The body rotates to face
+the aim direction (8-way yaw) so the visible faces track where the character is
 facing. The player additionally holds the current gun in-hand, rotated to the
 aim angle. Entities are drawn back-to-front by ground position so closer
 characters correctly overlap further ones.
