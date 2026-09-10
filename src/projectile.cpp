@@ -67,6 +67,9 @@ void Projectile::update(float dt, const GameContext& ctx) {
         pos.x += dxt / steps;
         pos.y += dyt / steps;
         if (ctx.tilemap && ctx.tilemap->is_solid(pos.x, pos.y)) {
+            const float vlen = std::sqrt(vel.x * vel.x + vel.y * vel.y);
+            if (vlen > 0.001f) hit_dir = Vec2{vel.x / vlen, vel.y / vlen};
+            hit_wall = true;
             if (thrown()) {
                 // Grenades bonk off the wall and drop: back the step out and
                 // stop moving, but keep counting down.
@@ -74,6 +77,7 @@ void Projectile::update(float dt, const GameContext& ctx) {
                 pos.y -= dyt / steps;
                 vel.x = 0.0f;
                 vel.y = 0.0f;
+                hit_wall = false;  // a bounce, not an impact
                 return;
             }
             on_hit();  // bullets die here, rockets detonate against the wall

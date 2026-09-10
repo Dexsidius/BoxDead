@@ -14,6 +14,7 @@ namespace {
 // palette rather than a scatter of conditionals.
 struct EnemyStats {
     int health;
+    int points;     // score for killing one
     float speed;    // pixels per second
     float size;     // collision box (the figure is drawn larger, see render)
     float range;    // fireball range; 0 for melee-only kinds
@@ -28,16 +29,16 @@ EnemyStats stats_for(EnemyKind k) {
     switch (k) {
         // Point-blank spitter: same speed as a zombie, one extra hit to kill.
         case EnemyKind::Devil:
-            return {2, kBaseSpeed, 36.0f, 50.0f, 1.4f, 1, 0.0f};
+            return {2, 150, kBaseSpeed, 36.0f, 50.0f, 1.4f, 1, 0.0f};
         // Mini-boss: slightly quicker than the horde and a real ranged threat.
         case EnemyKind::YellowDemon:
-            return {5, kBaseSpeed * 1.2f, 42.0f, 260.0f, 1.5f, 1, 0.0f};
+            return {5, 250, kBaseSpeed * 1.2f, 42.0f, 260.0f, 1.5f, 1, 0.0f};
         // End-of-level boss: big, slow, heavy, fires a three-way spread.
         case EnemyKind::Boss:
-            return {60, kBaseSpeed * 0.8f, 76.0f, 340.0f, 1.1f, 3, 26.0f};
+            return {60, 1000, kBaseSpeed * 0.8f, 76.0f, 340.0f, 1.1f, 3, 26.0f};
         case EnemyKind::Zombie:
         default:
-            return {1, kBaseSpeed, 36.0f, 0.0f, 0.0f, 0, 0.0f};
+            return {1, 50, kBaseSpeed, 36.0f, 0.0f, 0.0f, 0, 0.0f};
     }
 }
 
@@ -117,6 +118,7 @@ Enemy::Enemy(EnemyKind kind, float x, float y)
     sprite_.color = SDL_Color{255, 255, 255, 255};  // no tint
 }
 
+int Enemy::points() const { return stats_for(kind_).points; }
 float Enemy::fire_range() const { return stats_for(kind_).range; }
 float Enemy::fire_interval() const { return stats_for(kind_).interval; }
 int Enemy::fire_count() const { return stats_for(kind_).count; }

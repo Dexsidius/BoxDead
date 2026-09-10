@@ -34,6 +34,8 @@ add_executable(BoxDead
     src/projectile.cpp
     src/barrel.cpp
     src/explosion.cpp
+    src/spark.cpp
+    src/audio.cpp
     src/texture.cpp
     src/sprite.cpp
     src/iso_sprite.cpp

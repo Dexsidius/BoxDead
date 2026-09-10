@@ -78,6 +78,7 @@ void Tilemap::clear() {
     explosives_.clear();
     textures_.clear();
     solid_cells_.clear();
+    raised_.clear();
     grid_cols_ = 0;
     grid_rows_ = 0;
     loaded_ = false;
@@ -94,12 +95,12 @@ void Tilemap::build_solid_index() {
     for (size_t i = 0; i < tiles_.size(); ++i) {
         const Placement& t = tiles_[i];
         if (!t.solid) continue;
-        const int c0 = std::max(0, static_cast<int>(t.x / kGridCell));
+        const int c0 = std::max(0, static_cast<int>(t.sx / kGridCell));
         const int c1 = std::min(grid_cols_ - 1,
-                                static_cast<int>((t.x + t.w - 1) / kGridCell));
-        const int r0 = std::max(0, static_cast<int>(t.y / kGridCell));
+                                static_cast<int>((t.sx + t.sw - 1) / kGridCell));
+        const int r0 = std::max(0, static_cast<int>(t.sy / kGridCell));
         const int r1 = std::min(grid_rows_ - 1,
-                                static_cast<int>((t.y + t.h - 1) / kGridCell));
+                                static_cast<int>((t.sy + t.sh - 1) / kGridCell));
         for (int r = r0; r <= r1; ++r) {
             for (int c = c0; c <= c1; ++c) {
                 solid_cells_[static_cast<size_t>(r) * grid_cols_ + c]
@@ -182,7 +183,24 @@ bool Tilemap::load(SDL_Renderer* r, const std::string& mx_path) {
 
         const bool solid = name_is_solid(tile_name);
 
-        // Each location is [x, y, w, h]; default to 32x32 if missing/short.
+        // Optional tight collision footprint, in tile-local pixels. Without it
+        // a prop blocks its whole tile, which reads in-game as an invisible
+        // wall around the visible art.
+        int cx = 0;
+        int cy = 0;
+        int cw = -1;
+        int ch = -1;
+        const auto& col = entry.value("collision", json::array());
+        if (col.is_array() && col.size() >= 4) {
+            cx = col[0].get<int>();
+            cy = col[1].get<int>();
+            cw = col[2].get<int>();
+            ch = col[3].get<int>();
+        }
+
+        // Each location is [x, y, w, h, elevation]; default to 32x32 if
+        // missing/short. The fifth element arrived with .mx format version 2;
+        // a map written before that has four and loads flat.
         const auto& locations = entry.value("locations", json::array());
         if (!locations.is_array()) continue;
         for (const auto& loc : locations) {
@@ -191,30 +209,101 @@ bool Tilemap::load(SDL_Renderer* r, const std::string& mx_path) {
             int y = loc[1].get<int>();
             int w = (loc.size() > 2) ? loc[2].get<int>() : 32;
             int h = (loc.size() > 3) ? loc[3].get<int>() : 32;
-            tiles_.push_back(Placement{tex->get(), x, y, w, h, solid});
+            int elevation = (loc.size() > 4) ? loc[4].get<int>() : 0;
+            if (elevation < 0) elevation = 0;
+            const bool has_box = (cw > 0 && ch > 0);
+            tiles_.push_back(Placement{tex->get(), x, y, w, h, elevation, solid,
+                                       has_box ? x + cx : x,
+                                       has_box ? y + cy : y,
+                                       has_box ? cw : w,
+                                       has_box ? ch : h});
         }
     }
 
     build_solid_index();
+    build_raised_index();
     loaded_ = true;
     return true;
 }
 
+void Tilemap::build_raised_index() {
+    raised_.clear();
+    for (int i = 0; i < static_cast<int>(tiles_.size()); ++i) {
+        if (tiles_[static_cast<size_t>(i)].elevation > 0) raised_.push_back(i);
+    }
+    // Back to front by where each tile meets the ground, so a wall covers
+    // whatever stands behind it. Sorted once here instead of every frame.
+    // Stable, so tiles sharing a ground line keep their file order rather than
+    // trading places.
+    std::stable_sort(raised_.begin(), raised_.end(), [this](int a, int b) {
+        const Placement& pa = tiles_[static_cast<size_t>(a)];
+        const Placement& pb = tiles_[static_cast<size_t>(b)];
+        return (pa.y + pa.h) < (pb.y + pb.h);
+    });
+}
+
+float Tilemap::raised_ground_line(int index) const {
+    if (index < 0 || index >= static_cast<int>(raised_.size())) return 0.0f;
+    const Placement& t = tiles_[static_cast<size_t>(raised_[static_cast<size_t>(index)])];
+    return static_cast<float>(t.y + t.h);
+}
+
+void Tilemap::draw_placement(SDL_Renderer* r, const Placement& t, float cam_x,
+                             float cam_y, float view_w, float view_h) const {
+    // The footprint is where the tile sits on the floor; the top face is that
+    // same rect lifted by the elevation. This matches what the editor draws, so
+    // a level looks the same in the game as it did while it was being built.
+    const SDL_FRect dst{static_cast<float>(t.x) - cam_x,
+                        static_cast<float>(t.y) - cam_y -
+                            static_cast<float>(t.elevation),
+                        static_cast<float>(t.w),
+                        static_cast<float>(t.h)};
+
+    // Skip anything entirely off-screen rather than handing SDL a draw
+    // call to clip away. The bottom edge test uses the foot of the side face,
+    // not the top face, or a tall tile would vanish while its side was still
+    // on screen.
+    if (dst.x + dst.w <= 0.0f || dst.x >= view_w || dst.y >= view_h ||
+        dst.y + dst.h + static_cast<float>(t.elevation) <= 0.0f) {
+        return;
+    }
+
+    // Side face: fills the gap between the lifted top face and the ground,
+    // drawn from the tile's own texture with a darker colour mod so existing
+    // tile art gets a shaded side without anyone authoring new images.
+    if (t.elevation > 0) {
+        const SDL_FRect side{dst.x, dst.y + dst.h, dst.w,
+                             static_cast<float>(t.elevation)};
+        SDL_SetTextureColorMod(t.tex, 150, 150, 150);
+        SDL_RenderTexture(r, t.tex, nullptr, &side);
+        // Textures are shared between placements, so put the colour back.
+        SDL_SetTextureColorMod(t.tex, 255, 255, 255);
+    }
+
+    SDL_RenderTexture(r, t.tex, nullptr, &dst);
+}
+
 void Tilemap::render(SDL_Renderer* r, float cam_x, float cam_y, float view_w,
                     float view_h) const {
-    for (const auto& t : tiles_) {
-        const SDL_FRect dst{static_cast<float>(t.x) - cam_x,
-                            static_cast<float>(t.y) - cam_y,
-                            static_cast<float>(t.w),
-                            static_cast<float>(t.h)};
-        // Skip anything entirely off-screen rather than handing SDL a draw
-        // call to clip away.
-        if (dst.x + dst.w <= 0.0f || dst.y + dst.h <= 0.0f ||
-            dst.x >= view_w || dst.y >= view_h) {
-            continue;
-        }
-        SDL_RenderTexture(r, t.tex, nullptr, &dst);
+    render_floor(r, cam_x, cam_y, view_w, view_h);
+    for (int i = 0; i < raised_count(); ++i) {
+        render_raised(r, i, cam_x, cam_y, view_w, view_h);
     }
+}
+
+void Tilemap::render_floor(SDL_Renderer* r, float cam_x, float cam_y,
+                           float view_w, float view_h) const {
+    for (const auto& t : tiles_) {
+        if (t.elevation > 0) continue;  // drawn later, interleaved with entities
+        draw_placement(r, t, cam_x, cam_y, view_w, view_h);
+    }
+}
+
+void Tilemap::render_raised(SDL_Renderer* r, int index, float cam_x,
+                            float cam_y, float view_w, float view_h) const {
+    if (index < 0 || index >= static_cast<int>(raised_.size())) return;
+    draw_placement(r, tiles_[static_cast<size_t>(raised_[static_cast<size_t>(index)])],
+                   cam_x, cam_y, view_w, view_h);
 }
 
 void Tilemap::world_bounds(float& out_w, float& out_h) const {
@@ -239,7 +328,8 @@ bool Tilemap::is_solid(float px, float py) const {
     // Only the solid tiles sharing this grid cell can contain the point.
     for (int i : solid_cells_[static_cast<size_t>(r) * grid_cols_ + c]) {
         const Placement& t = tiles_[static_cast<size_t>(i)];
-        if (px >= t.x && px < t.x + t.w && py >= t.y && py < t.y + t.h) {
+        if (px >= t.sx && px < t.sx + t.sw &&
+            py >= t.sy && py < t.sy + t.sh) {
             return true;
         }
     }

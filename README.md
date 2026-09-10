@@ -305,6 +305,102 @@ centre line**, so switching to the shotgun visibly fans the sight out to its
 the same wall test the bullets use and marks the wall it stops on, so the sight
 never promises a shot the geometry will not allow.
 
+## Score
+
+Killing something awards points, shown at the top right above the kill count
+and again on the GAME OVER screen. Values live in the same per-kind stats table
+as health and speed (`stats_for` in `src/enemy.cpp`), so retuning one is a line
+edit.
+
+| Enemy | Points |
+| --- | --- |
+| Zombie | 50 |
+| Red Devil | 150 |
+| Yellow Demon | 250 |
+| Level boss | 1000 |
+
+Points are awarded wherever a kill is counted, so a barrel chain, a rocket or a
+grenade scores exactly the same as shooting something in the face.
+
+## Collision footprints
+
+A tile is drawn on a full 32x32 (or 64x64) cell, but a prop only *occupies*
+part of that cell -- a headstone covered 33% of its tile while blocking 100% of
+it. That put a band of invisible wall around every rock, pillar and tree, which
+is what enemies were snagging on.
+
+A tile entry may now carry an optional collision footprint in tile-local
+pixels, and that is what blocks movement:
+
+```json
+"Headstone": {
+    "filepath": "exports/Graveyard/assets/Headstone.bmp",
+    "locations": [[1696, 128, 32, 32], ...],
+    "collision": [10, 12, 11, 20]
+}
+```
+
+`tools/build_levels.py` derives it from the opaque part of the prop art -
+ignoring the soft drop shadow, and clipped to the lower part of the tile, since
+a tree canopy reads as overhead rather than as something you walk into. Tiles
+without the key (walls, and any map authored before this) block their whole
+cell exactly as before, so nothing breaks. LevelEdit++ ignores keys it does not
+know, so a map carrying one still opens in the editor.
+
+What that removed, per prop:
+
+| Prop | Tile | Blocked | Reduction |
+| --- | --- | --- | --- |
+| Dead Tree Obstacle | 64x64 | 22x37 | 80% |
+| Headstone / Ruin Pillar | 32x32 | 11x20 | 79% |
+| Tree Obstacle | 64x64 | 40x37 | 64% |
+| Rock / Hedge | 32x32 | 20x19 | 63% |
+
+Barrels got the same treatment from the other side: the drum is drawn narrower
+than its cell, so the dynamic obstacle the player and enemies collide with is
+80% of the tile rather than all of it.
+
+## Impact effects
+
+Every shot that lands throws a short burst of particles from the impact point,
+fanned back along the direction the round was travelling so a wall hit sprays
+off the surface rather than through it. Pale stone chips off level geometry,
+red spray off a body. `Spark` is collision-free and lasts about a fifth of a
+second, like `Explosion` but small and cheap - a fixed array of particles with
+drag, drawn as short fading streaks.
+
+A projectile cannot spawn entities or reach the mixer itself, so it records
+`hit_wall` plus the direction it was going and the Game turns that into a spark
+and a sound on the same frame. A thrown grenade bouncing off a wall clears the
+flag: that is a bounce, not an impact.
+
+## Sound
+
+Sound effects are synthesised from code by `tools/build_sfx.py` - no
+recordings, no third-party audio - so, like the tile art, the output ships with
+the game under this repository's own licence:
+
+| Sound | Made of |
+| --- | --- |
+| `bullet_wall.wav` | bright noise tick + a short pitched ping, ~90ms |
+| `enemy_hit.wav` | 190Hz body sweeping down + a lowpassed noise splat, ~160ms |
+| `explosion.wav` | noise crack, brown-noise roar, and a 62Hz rumble, ~750ms |
+
+```bash
+python tools/build_sfx.py     # writes assets/sfx/*.wav, needs nothing but Python
+```
+
+Playback is plain SDL3 - **no SDL_mixer dependency**. Each WAV is loaded once
+and played through a pool of four `SDL_AudioStream`s; SDL mixes every stream
+bound to the device, so up to four copies of a sound can overlap, which matters
+when a barrel chain fires half a dozen explosions in a second. Voices are taken
+round-robin and cleared before reuse, so the oldest overlapping copy is the one
+dropped rather than the new sound being swallowed.
+
+Audio is optional. If no device opens - headless CI, no sound card - `init()`
+returns false and `play()` becomes a no-op, so nothing else has to care. The
+game never fails to start over sound.
+
 ## Explosive barrels
 
 Every scene is littered with red fuel drums that go up when shot and take the
@@ -437,6 +533,26 @@ and fungal blooms, Sewers green-grey stone with algae, Graveyard violet cobble
 with headstones and dead trees, Hell's Gate red stone with obsidian, and The
 Sprawl in neutral grey.
 
+## Elevation
+
+Generated scenes use the `.mx` format's fifth location element, the elevation
+LevelEdit++ calls "Stands Up":
+
+```json
+"locations": [[1664, 1280, 32, 32, 14], ...]
+```
+
+A raised tile draws its top face lifted by that many pixels with a shaded side
+face filling the gap down to the footprint, and the loader depth-sorts raised
+tiles against the entities, so the player walks behind a wall rather than over
+it. **The footprint - and so the collision - stays flat on the ground**, which
+is why raising a tile changes how a scene reads without changing how it plays.
+
+Walls stand 22px, trees 24-26, headstones and pillars 18, hedges 14, rocks 12.
+Walkable decoration stays at 0: something you can stroll through should not
+look like it stands up. Maps written before this have four-element locations
+and load flat.
+
 ## Round-tripping with LevelEdit++
 
 The generated `.mx` files use the editor's own path convention
@@ -470,11 +586,12 @@ containing the `.mx` plus an `assets/` subfolder of `.bmp` tile images:
 
 ```json
 {
+    "formatVersion": 2,
     "name": "Courtyard",
     "tiles": {
         "Ground": {
             "filepath": "assets/Ground.bmp",
-            "locations": [[32, 32, 32, 32], [64, 32, 32, 32], ...]
+            "locations": [[32, 32, 32, 32, 0], [64, 32, 32, 32, 0], ...]
         },
         "Wall":  { "filepath": "assets/Wall.bmp",  "locations": [...] },
         "Block": { "filepath": "assets/Block.bmp", "locations": [...] },
@@ -485,8 +602,27 @@ containing the `.mx` plus an `assets/` subfolder of `.bmp` tile images:
 
 - `filepath` is relative to the `.mx` file's directory (the editor writes
   `assets/<TileName>.bmp`).
-- `locations` is a list of `[x, y, w, h]` world-pixel placements (default tile
-  size 32x32). The player/enemies collide with solid tiles.
+- `locations` is a list of `[x, y, w, h, elevation]` world-pixel placements
+  (default tile size 32x32). The player/enemies collide with solid tiles.
+
+### Tile elevation (2.5D)
+
+`elevation` is the fifth element of a placement: how far the tile stands off
+the floor, in pixels. `0` is flat ground. The editor calls it **Stands Up**.
+
+A raised tile draws its top face lifted by that much, with a side face filling
+the gap down to the footprint -- the side is the tile's own texture darkened,
+so existing tile art gets a shaded edge without new images. Raised tiles are
+drawn interleaved with the entities, ordered by the line where each meets the
+ground, so a character behind a wall is covered by it and one in front is drawn
+over it. The world stays top-down; only the tiles are extruded.
+
+The footprint never moves, so **elevation changes nothing about collision** --
+a raised tile blocks exactly the ground it was placed on.
+
+`formatVersion` 2 introduced the fifth element. Version 1 files have four and
+load flat, and readers that only know the four-element form ignore anything
+past it, so the two versions interoperate in both directions.
 
 ### Explosive tiles (barrels)
 
@@ -545,11 +681,12 @@ since the tilemap draws every tile without culling).
 
 Runs a ~15-second headless scenario (auto-firing at enemies, forcing item
 spawns on the player) and prints a summary line — useful for CI or headless
-environments. The summary includes `enemy_frame` (a live enemy's current animation frame,
+environments. The summary leads with `points` (the score) and includes `enemy_frame` (a live enemy's current animation frame,
 proving the animator ticks), `barrels` (how many barrels detonated), and
 `blast_kills` (enemies killed by explosions rather than bullets), `demons`
 (yellow demons spawned on the 5th-wave rolls) and `bosses` (level bosses
-spawned) `blasts` (rockets and grenades that went off) and `wave_gate` (`OK`, or
+spawned) `blasts` (rockets and grenades that went off), `wall_hits` / `enemy_hits`
+(impacts that threw a spark and played a sound) and `wave_gate` (`OK`, or
 `LEAKED` if a wave ever began with enemies still alive). A run reporting `barrels=0` means the level's explosive tiles
 never loaded; `bosses=0` means the run was too short to reach a boss wave.
 
@@ -577,6 +714,11 @@ g++ -std=c++20 -I include test_projectile.cpp src/projectile.cpp \
     src/entity.cpp src/tilemap.cpp src/texture.cpp src/sprite.cpp \
     -lSDL3 -o test_projectile
 SDL_VIDEO_DRIVER=dummy ./test_projectile
+
+# Audio: the generated WAVs parse and open as playback streams (skips
+# cleanly with no sound device).
+g++ -std=c++20 -I include test_audio.cpp src/audio.cpp -lSDL3 -o test_audio
+./test_audio
 
 # Tilemap loader: every scene .mx parses, yields tiles, and lists barrels.
 g++ -std=c++20 -I include -I /usr/include/SDL3 test_tilemap.cpp \

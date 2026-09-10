@@ -41,6 +41,19 @@ from PIL import Image, ImageDraw
 
 TILE = 32
 
+# How far each layer stands off the floor, in pixels (the editor calls it
+# "Stands Up"). The loader draws a raised tile's top face lifted by this much
+# with a shaded side face filling the gap, and depth-sorts it against the
+# entities, so the player can walk behind a wall. The *footprint* - and so the
+# collision - stays flat on the ground either way, which is why raising a tile
+# changes how a scene reads without changing how it plays.
+#
+# Walkable decoration stays at 0: something you can stroll through should not
+# look like it stands up.
+LAYER_ELEVATION = {'Ground': 0, 'Wall': 22, 'Barrel': 0}
+PROP_ELEVATION = {'rock': 12, 'headstone': 18, 'bush': 14,
+                  'bush_small': 0, 'mushroom': 0, 'tree': 26, 'tree_dead': 24}
+
 
 # --------------------------------------------------------------------------
 # colour helpers
@@ -405,6 +418,30 @@ def make_floor(kind, rng, base, accent):
     return rough_tile(rng, base)
 
 
+def solid_box(art, size):
+    """The footprint a prop should actually block, in tile-local pixels.
+
+    Taken from the opaque part of the art (ignoring the soft drop shadow), then
+    clipped to the lower part of the tile: the canopy of a tree reads as
+    overhead rather than as something you walk into, and blocking the full
+    image would put an invisible wall around every prop.
+    """
+    alpha = art.split()[-1]
+    # Threshold well above the shadow's alpha so the shadow does not inflate it.
+    box = alpha.point(lambda a: 255 if a > 140 else 0).getbbox()
+    if not box:
+        return None
+    x0, y0, x1, y1 = box
+    y0 = max(y0, int(size * 0.30))          # ignore the top third (canopy/air)
+    inset = max(1, size // 16)              # a little forgiveness on the sides
+    x0 += inset
+    x1 -= inset
+    y1 -= max(1, size // 24)                # the shadow lip at the very bottom
+    if x1 - x0 < 6 or y1 - y0 < 6:
+        return None                         # too thin to be worth blocking
+    return [x0, y0, x1 - x0, y1 - y0]
+
+
 def bake(art, floor, size):
     canvas = Image.new('RGBA', (size, size))
     for y in range(0, size, TILE):
@@ -415,6 +452,7 @@ def bake(art, floor, size):
 
 
 def make_prop(kind, rng, colour, floor, size=TILE):
+    """Returns (baked opaque tile, collision footprint or None)."""
     if kind == 'rock':
         art = rock_prop(rng, colour)
     elif kind == 'headstone':
@@ -435,7 +473,7 @@ def make_prop(kind, rng, colour, floor, size=TILE):
         art = tree_prop(rng, colour[0], colour[1], size=size, dead=True)
     else:
         raise SystemExit('unknown prop kind ' + kind)
-    return bake(art, floor, size)
+    return bake(art, floor, size), solid_box(art, size)
 
 
 def save_bmp(img, path):
@@ -557,9 +595,18 @@ def main():
         save_bmp(floor, os.path.join(asset_dir, 'Ground.bmp'))
         save_bmp(wall, os.path.join(asset_dir, 'Wall.bmp'))
 
+        # Collision footprints, keyed by tile name, written into the .mx so the
+        # game blocks the art rather than the whole tile.
+        footprints = {}
+        elevations = dict(LAYER_ELEVATION)
+        for i, (tname, kind, colour) in enumerate(scene['props'] + scene['decor']):
+            elevations[tname] = PROP_ELEVATION.get(kind, 0)
         for i, (tname, kind, colour) in enumerate(scene['props'] + scene['decor']):
             size = TILE * 2 if kind.startswith('tree') else TILE
-            img = make_prop(kind, random.Random(seed + 10 + i), colour, floor, size)
+            img, box = make_prop(kind, random.Random(seed + 10 + i), colour,
+                                 floor, size)
+            if box:
+                footprints[tname] = box
             save_bmp(img, os.path.join(asset_dir, tname + '.bmp'))
 
         # Barrels are drawn as 3D props in-game; this image is only so the
@@ -572,8 +619,12 @@ def main():
         doc = {
             'name': name,
             'tiles': {
-                tname: {'filepath': f'exports/{name}/assets/{tname}.bmp',
-                        'locations': locs}
+                tname: ({'filepath': f'exports/{name}/assets/{tname}.bmp',
+                         # [x, y, w, h, elevation] - ".mx" format version 2
+                         'locations': [loc + [elevations.get(tname, 0)]
+                                       for loc in locs]}
+                        | ({'collision': footprints[tname]}
+                           if tname in footprints else {}))
                 for tname, locs in layers.items()
             },
         }
