@@ -50,6 +50,13 @@ public:
     // Set when this projectile should detonate; the Game consumes it, kills the
     // projectile and applies the blast.
     bool blast_pending = false;
+    // Set on the frame this shot stopped against level geometry. The Game
+    // consumes it to throw a spark and play the impact sound - a projectile
+    // cannot spawn entities or reach the mixer itself.
+    bool hit_wall = false;
+    // Travel direction at the moment of impact, so the spark sprays back off
+    // the surface instead of firing in an arbitrary direction.
+    Vec2 hit_dir{};
     Payload payload;
 
     bool armed() const { return payload.explodes(); }

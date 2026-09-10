@@ -24,6 +24,8 @@ public:
     Enemy(EnemyKind kind, float x, float y);
 
     EnemyKind kind() const { return kind_; }
+    // Score awarded for killing this enemy.
+    int points() const;
     bool is_boss() const { return kind_ == EnemyKind::Boss; }
 
     // --- Ranged attack profile (per kind) ---------------------------------

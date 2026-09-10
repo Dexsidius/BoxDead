@@ -5,6 +5,7 @@
 
 #include "boxdead/barrel.hpp"
 #include "boxdead/explosion.hpp"
+#include "boxdead/spark.hpp"
 #include "boxdead/item.hpp"
 #include "boxdead/sprite.hpp"
 
@@ -190,6 +191,16 @@ bool Game::init() {
     // second, offset cursor on screen.
     if (!smoke_test_ && !screenshot_mode_) SDL_HideCursor();
 
+    // Sound is optional: a headless run has no device, and the game is
+    // perfectly playable silent, so a failure here is not fatal.
+    if (!smoke_test_ && !screenshot_mode_) {
+        for (const std::string& p : {base_dir + "assets/sfx",
+                                     base_dir + "../assets/sfx",
+                                     std::string("assets/sfx")}) {
+            if (audio_.init(p)) break;
+        }
+    }
+
     std::srand(static_cast<unsigned>(std::time(nullptr)));
 
     menu_.set_items(kMainMenuItems);
@@ -372,7 +383,7 @@ void Game::run() {
             // nothing extra to do (a trailing render() here crashes on some
             // X11 drivers after the scene has torn down).
         } else {
-            std::cerr << "smoke: kills=" << score_ << " wave=" << wave_
+            std::cerr << "smoke: points=" << points_ << " kills=" << score_ << " wave=" << wave_
                       << " hp=" << player_->health
                       << " weapon=" << player_->weapon_name()
                       << " pickups=" << pickups_collected_;
@@ -386,6 +397,8 @@ void Game::run() {
                       << " blasts=" << projectile_blasts_
                       << " stunned=" << enemies_stunned_
                       << " lured=" << enemies_lured_
+                      << " wall_hits=" << wall_impacts_
+                      << " enemy_hits=" << enemy_impacts_
                       << " wave_gate="
                       << (wave_gate_violations_ == 0 ? "OK" : "LEAKED")
                       << '\n';
@@ -781,6 +794,8 @@ void Game::update(float dt) {
     update_barrels();
     // Rockets that hit something and grenades whose fuse ran out.
     update_projectile_blasts();
+    // Sparks and impact sounds for shots that stopped on the level.
+    update_projectile_impacts();
 
     // In smoke, record the highest enemy animation frame seen so the summary
     // proves the animator ticked even if every enemy dies before the run ends.
@@ -1049,6 +1064,13 @@ void Game::check_collisions() {
     // Drops are queued rather than spawned inline: maybe_drop_item() pushes
     // into entities_, which would invalidate the loops walking it.
     std::vector<Vec2> kill_drops;
+    // Impact effects are queued for the same reason drops are: spawning a
+    // spark mid-sweep would invalidate the loops walking entities_.
+    struct EnemyImpact {
+        Vec2 pos;
+        Vec2 dir;
+    };
+    std::vector<EnemyImpact> enemy_hits;
     for (auto& a : entities_) {
         auto* proj = dynamic_cast<Projectile*>(a.get());
         if (!proj || !proj->alive || proj->hostile) continue;
@@ -1060,15 +1082,31 @@ void Game::check_collisions() {
                 // bullet or rocket ends here.
                 if (proj->thrown()) continue;
                 const Vec2 drop_pos = en->pos;
-                if (proj->damage_amount > 0) en->damage(proj->damage_amount);
+                if (proj->damage_amount > 0) {
+                    en->damage(proj->damage_amount);
+                    const float vl = std::sqrt(proj->vel.x * proj->vel.x +
+                                               proj->vel.y * proj->vel.y);
+                    enemy_hits.push_back(
+                        {proj->pos, vl > 0.001f
+                                        ? Vec2{proj->vel.x / vl, proj->vel.y / vl}
+                                        : Vec2{0.0f, -1.0f}});
+                }
                 proj->on_hit();
                 if (!en->alive) {
                     ++score_;  // count the kill
+                    points_ += en->points();
                     kill_drops.push_back(drop_pos);
                 }
                 break;
             }
         }
+    }
+    for (const EnemyImpact& h : enemy_hits) {
+        entities_.push_back(std::make_unique<Spark>(
+            h.pos.x, h.pos.y, h.dir, SDL_Color{196, 40, 36, 255}, 8, 130.0f,
+            0.24f));
+        audio_.play(Sound::EnemyHit, 0.6f);
+        ++enemy_impacts_;
     }
     for (const Vec2& p : kill_drops) maybe_drop_item(p);
 
@@ -1215,7 +1253,18 @@ void Game::render() {
     // stays the solid fallback color above. Offset by the camera so a world
     // larger than the viewport scrolls.
     if (tilemap_.loaded()) {
-        tilemap_.render(renderer_, camera_.x, camera_.y, ww, wh);
+        // In the world, only the floor goes down here: raised tiles are drawn
+        // further below, interleaved with the entities by depth so a wall can
+        // cover whatever is standing behind it. The menu screens have no
+        // entities to interleave with, so they take the whole tilemap at once.
+        const bool in_world = state_ != GameState::MainMenu &&
+                              state_ != GameState::CharacterSelect &&
+                              state_ != GameState::Options;
+        if (in_world) {
+            tilemap_.render_floor(renderer_, camera_.x, camera_.y, ww, wh);
+        } else {
+            tilemap_.render(renderer_, camera_.x, camera_.y, ww, wh);
+        }
     }
 
     if (state_ == GameState::MainMenu) {
@@ -1254,7 +1303,29 @@ void Game::render() {
     std::sort(order.begin(), order.end(), [](const Entity* a, const Entity* b) {
         return (a->pos.y + a->size.y * 0.5f) < (b->pos.y + b->size.y * 0.5f);
     });
-    for (const auto* e : order) e->render(renderer_, camera_.x, camera_.y);
+    // Walk the raised tiles and the entities together, always drawing whichever
+    // sits further back. That is what puts a character behind a wall *behind*
+    // it, while one standing in front of the same wall is drawn over it.
+    int next_tile = 0;
+    const int raised = tilemap_.loaded() ? tilemap_.raised_count() : 0;
+
+    for (const auto* e : order) {
+        const float entity_ground = e->pos.y + e->size.y * 0.5f;
+        while (next_tile < raised &&
+               tilemap_.raised_ground_line(next_tile) <= entity_ground) {
+            tilemap_.render_raised(renderer_, next_tile, camera_.x, camera_.y,
+                                   ww, wh);
+            ++next_tile;
+        }
+        e->render(renderer_, camera_.x, camera_.y);
+    }
+
+    // Whatever is left stands in front of every entity on screen.
+    while (next_tile < raised) {
+        tilemap_.render_raised(renderer_, next_tile, camera_.x, camera_.y, ww,
+                               wh);
+        ++next_tile;
+    }
 
     // The boss carries its name over its head, in world space.
     if (const Enemy* boss = find_boss()) {
@@ -1362,8 +1433,10 @@ void Game::render_hud() {
     SDL_RenderRect(renderer_, &border);
 
     // Score + wave, top-right.
-    font_.draw("Kills: " + std::to_string(score_), 980.0f, 16.0f);
-    font_.draw("Wave: " + std::to_string(wave_), 980.0f, 40.0f);
+    font_.draw("Score: " + std::to_string(points_), 980.0f, 16.0f,
+               SDL_Color{255, 226, 120, 255});
+    font_.draw("Kills: " + std::to_string(score_), 980.0f, 40.0f);
+    font_.draw("Wave: " + std::to_string(wave_), 980.0f, 64.0f);
     // Waves end on a clear, so show what is still owed: unspawned roster plus
     // everything still breathing. Without this the pause between waves reads
     // as the game having stopped spawning.
@@ -1378,7 +1451,7 @@ void Game::render_hud() {
     // highlighted; empty (finite) weapons are dimmed. Keys 1/2/3 select,
     // Q/E cycle.
     // Slot keys are 1..N in enum order.
-    float iy = 64.0f;
+    float iy = 88.0f;
     for (int i = 0; i < Player::kSlotCount; ++i) {
         const WeaponKind wk = static_cast<WeaponKind>(i);
         if (!player_->owns(wk)) continue;  // hide unowned slots
@@ -1416,8 +1489,14 @@ void Game::render_hud() {
         // GAME OVER + score + restart prompt, centered.
         font_.draw("GAME OVER", 560.0f, 320.0f,
                    SDL_Color{220, 45, 45, 255});
-        font_.draw("Kills: " + std::to_string(score_), 568.0f, 360.0f);
-        font_.draw("Press R to restart, Esc for menu", 500.0f, 400.0f);
+        const std::string sline = "Score: " + std::to_string(points_);
+        const float sw = static_cast<float>(font_.text_width(sline));
+        font_.draw(sline, (1280.0f - sw) * 0.5f, 358.0f,
+                   SDL_Color{255, 226, 120, 255});
+        const std::string kline = "Kills: " + std::to_string(score_);
+        const float kw = static_cast<float>(font_.text_width(kline));
+        font_.draw(kline, (1280.0f - kw) * 0.5f, 386.0f);
+        font_.draw("Press R to restart, Esc for menu", 500.0f, 420.0f);
     }
 }
 
@@ -1433,6 +1512,7 @@ void Game::reset() {
     invuln_timer_ = 0.0f;
     game_over_ = false;
     score_ = 0;
+    points_ = 0;
     wave_ = 1;
     wave_spawns_left_ = 0;
     wave_break_timer_ = 0.0f;
@@ -1448,6 +1528,8 @@ void Game::reset() {
     projectile_blasts_ = 0;
     enemies_stunned_ = 0;
     enemies_lured_ = 0;
+    wall_impacts_ = 0;
+    enemy_impacts_ = 0;
     pickup_toast_timer_ = 0.0f;
     pickup_toast_.clear();
     paused_ = false;
@@ -1760,7 +1842,11 @@ void Game::rebuild_obstacles() {
     for (const auto& e : entities_) {
         const auto* b = dynamic_cast<const Barrel*>(e.get());
         if (!b || !b->alive) continue;
-        obstacles_.push_back(Obstacle{b->pos, b->size});
+        // The drum is drawn narrower than its tile, so block the drum rather
+        // than the full 32px cell: otherwise there is a lip of visible floor
+        // around every barrel that enemies snag on.
+        obstacles_.push_back(
+            Obstacle{b->pos, Vec2{b->size.x * 0.8f, b->size.y * 0.8f}});
     }
 }
 
@@ -1815,6 +1901,7 @@ void Game::explode(Vec2 pos, float radius, int damage, float stun_seconds,
                 if (!en->alive) {
                     ++score_;
                     ++blast_kills_;
+                    points_ += en->points();
                     drops.push_back(en->pos);
                 }
             }
@@ -1840,6 +1927,32 @@ void Game::explode(Vec2 pos, float radius, int damage, float stun_seconds,
 
     for (const Vec2& p : drops) maybe_drop_item(p);
     entities_.push_back(std::make_unique<Explosion>(pos.x, pos.y, radius));
+    // Bigger blasts are louder, within reason.
+    audio_.play(Sound::Explosion,
+                std::clamp(0.55f + radius / 400.0f, 0.5f, 1.0f));
+}
+
+void Game::update_projectile_impacts() {
+    // Collect first, spawn after: adding sparks would invalidate the loop.
+    struct Impact {
+        Vec2 pos;
+        Vec2 dir;
+    };
+    std::vector<Impact> hits;
+    for (auto& e : entities_) {
+        auto* p = dynamic_cast<Projectile*>(e.get());
+        if (!p || !p->hit_wall) continue;
+        p->hit_wall = false;
+        hits.push_back({p->pos, p->hit_dir});
+    }
+    for (const Impact& h : hits) {
+        // Pale stone chips, thrown back off the surface.
+        entities_.push_back(std::make_unique<Spark>(
+            h.pos.x, h.pos.y, h.dir, SDL_Color{236, 226, 190, 255}, 7,
+            150.0f, 0.20f));
+        audio_.play(Sound::BulletWall, 0.5f);
+        ++wall_impacts_;
+    }
 }
 
 void Game::update_projectile_blasts() {
@@ -1912,6 +2025,7 @@ void Game::shutdown() {
     // holding a texture has to be released here by hand or SDL frees it
     // against a dead renderer and corrupts the heap on exit.
     entities_.clear();
+    audio_.shutdown();
     font_.release();  // cached text textures + the TTF_Font (before TTF_Quit)
     tilemap_.clear();
     player_walk_sheet_.reset();

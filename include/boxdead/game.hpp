@@ -1,5 +1,6 @@
 #pragma once
 
+#include "boxdead/audio.hpp"
 #include "boxdead/barrel.hpp"
 #include "boxdead/entity.hpp"
 #include "boxdead/enemy.hpp"
@@ -122,6 +123,9 @@ private:
                  float lure_radius, float lure_seconds);
     // Detonate any projectile that asked to go off this frame.
     void update_projectile_blasts();
+    // Throw a spark and play the impact sound for every shot that stopped
+    // against level geometry this frame.
+    void update_projectile_impacts();
     std::vector<Obstacle> obstacles_;  // living barrels, rebuilt each frame
 
     void check_item_pickups();
@@ -177,8 +181,10 @@ private:
     float invuln_timer_ = 0.0f;
     bool game_over_ = false;
 
-    // Score + progression.
+    // Score + progression. `score_` counts kills; `points_` is the score the
+    // HUD shows, awarded per enemy kind (see Enemy::points()).
     int score_ = 0;
+    int points_ = 0;
     // Waves are cleared, not timed: a wave spawns a fixed roster and the next
     // one does not begin until every enemy from it is dead.
     int wave_ = 1;
@@ -225,6 +231,8 @@ private:
     int projectile_blasts_ = 0;      // rockets/grenades detonated (smoke metric)
     int enemies_stunned_ = 0;        // concussion freezes applied (smoke metric)
     int enemies_lured_ = 0;          // lure pulls applied (smoke metric)
+    int wall_impacts_ = 0;           // shots that stopped on level geometry
+    int enemy_impacts_ = 0;          // shots that landed on a body
     std::string pickup_toast_;
     float pickup_toast_timer_ = 0.0f;
 
@@ -232,6 +240,7 @@ private:
     GameState state_ = GameState::MainMenu;
     Menu menu_;
     Font font_;
+    Audio audio_;
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
