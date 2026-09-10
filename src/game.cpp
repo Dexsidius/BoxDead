@@ -1215,7 +1215,18 @@ void Game::render() {
     // stays the solid fallback color above. Offset by the camera so a world
     // larger than the viewport scrolls.
     if (tilemap_.loaded()) {
-        tilemap_.render(renderer_, camera_.x, camera_.y, ww, wh);
+        // In the world, only the floor goes down here: raised tiles are drawn
+        // further below, interleaved with the entities by depth so a wall can
+        // cover whatever is standing behind it. The menu screens have no
+        // entities to interleave with, so they take the whole tilemap at once.
+        const bool in_world = state_ != GameState::MainMenu &&
+                              state_ != GameState::CharacterSelect &&
+                              state_ != GameState::Options;
+        if (in_world) {
+            tilemap_.render_floor(renderer_, camera_.x, camera_.y, ww, wh);
+        } else {
+            tilemap_.render(renderer_, camera_.x, camera_.y, ww, wh);
+        }
     }
 
     if (state_ == GameState::MainMenu) {
@@ -1254,7 +1265,29 @@ void Game::render() {
     std::sort(order.begin(), order.end(), [](const Entity* a, const Entity* b) {
         return (a->pos.y + a->size.y * 0.5f) < (b->pos.y + b->size.y * 0.5f);
     });
-    for (const auto* e : order) e->render(renderer_, camera_.x, camera_.y);
+    // Walk the raised tiles and the entities together, always drawing whichever
+    // sits further back. That is what puts a character behind a wall *behind*
+    // it, while one standing in front of the same wall is drawn over it.
+    int next_tile = 0;
+    const int raised = tilemap_.loaded() ? tilemap_.raised_count() : 0;
+
+    for (const auto* e : order) {
+        const float entity_ground = e->pos.y + e->size.y * 0.5f;
+        while (next_tile < raised &&
+               tilemap_.raised_ground_line(next_tile) <= entity_ground) {
+            tilemap_.render_raised(renderer_, next_tile, camera_.x, camera_.y,
+                                   ww, wh);
+            ++next_tile;
+        }
+        e->render(renderer_, camera_.x, camera_.y);
+    }
+
+    // Whatever is left stands in front of every entity on screen.
+    while (next_tile < raised) {
+        tilemap_.render_raised(renderer_, next_tile, camera_.x, camera_.y, ww,
+                               wh);
+        ++next_tile;
+    }
 
     // The boss carries its name over its head, in world space.
     if (const Enemy* boss = find_boss()) {

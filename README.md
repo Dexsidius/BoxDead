@@ -470,11 +470,12 @@ containing the `.mx` plus an `assets/` subfolder of `.bmp` tile images:
 
 ```json
 {
+    "formatVersion": 2,
     "name": "Courtyard",
     "tiles": {
         "Ground": {
             "filepath": "assets/Ground.bmp",
-            "locations": [[32, 32, 32, 32], [64, 32, 32, 32], ...]
+            "locations": [[32, 32, 32, 32, 0], [64, 32, 32, 32, 0], ...]
         },
         "Wall":  { "filepath": "assets/Wall.bmp",  "locations": [...] },
         "Block": { "filepath": "assets/Block.bmp", "locations": [...] },
@@ -485,8 +486,27 @@ containing the `.mx` plus an `assets/` subfolder of `.bmp` tile images:
 
 - `filepath` is relative to the `.mx` file's directory (the editor writes
   `assets/<TileName>.bmp`).
-- `locations` is a list of `[x, y, w, h]` world-pixel placements (default tile
-  size 32x32). The player/enemies collide with solid tiles.
+- `locations` is a list of `[x, y, w, h, elevation]` world-pixel placements
+  (default tile size 32x32). The player/enemies collide with solid tiles.
+
+### Tile elevation (2.5D)
+
+`elevation` is the fifth element of a placement: how far the tile stands off
+the floor, in pixels. `0` is flat ground. The editor calls it **Stands Up**.
+
+A raised tile draws its top face lifted by that much, with a side face filling
+the gap down to the footprint -- the side is the tile's own texture darkened,
+so existing tile art gets a shaded edge without new images. Raised tiles are
+drawn interleaved with the entities, ordered by the line where each meets the
+ground, so a character behind a wall is covered by it and one in front is drawn
+over it. The world stays top-down; only the tiles are extruded.
+
+The footprint never moves, so **elevation changes nothing about collision** --
+a raised tile blocks exactly the ground it was placed on.
+
+`formatVersion` 2 introduced the fifth element. Version 1 files have four and
+load flat, and readers that only know the four-element form ignore anything
+past it, so the two versions interoperate in both directions.
 
 ### Explosive tiles (barrels)
 
