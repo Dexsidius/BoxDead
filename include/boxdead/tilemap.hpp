@@ -3,14 +3,16 @@
 // `ToJson::ExportMX`:
 //
 //   {
-//     "formatVersion": 2,
+//     "formatVersion": 3,
 //     "name": "Courtyard",
 //     "tiles": {
 //       "Ground": {
 //         "filepath": "assets/Ground.bmp",
+//         "flags": [],
 //         "locations": [[x, y, w, h, elevation], ...]
 //       },
-//       "Wall": { "filepath": "assets/Wall.bmp", "locations": [...] }
+//       "Wall": { "filepath": "assets/Wall.bmp", "flags": ["solid"],
+//                 "locations": [...] }
 //     }
 //   }
 //
@@ -25,20 +27,27 @@
 // face filling the gap down to the footprint - the footprint, and so the
 // collision, is exactly where it would be if the tile were flat.
 //
-// BoxDead loads the .bmp for
-// each tile once and renders every placement. Tiles whose name contains a
-// solid keyword ("wall", "block", "rock", "stone", "barrier", "fence",
-// "crate", "pillar", "obstacle") are treated as collidable.
+// BoxDead loads the .bmp for each tile once and renders every placement.
+//
+// What a tile *means* comes from its "flags" (format version 3). A tile
+// flagged "solid" blocks movement. A tile flagged "explosive" is not drawn or
+// collided as a tile at all: its placements are handed to the Game, which
+// spawns a destructible Barrel entity at each one so they can be shot,
+// explode, and chain-react. Flags BoxDead does not act on are ignored, so a
+// tileset can carry meanings for other games as well. An entry that has a
+// "flags" key, even an empty one, is taken exactly as written.
+//
+// An entry with no "flags" key has never been given a meaning, so BoxDead
+// reads it the way it always has, from the tile's name: an explosive keyword
+// ("barrel", "drum", "explosive", "tnt") first, then a solid keyword ("wall",
+// "block", "rock", "stone", "barrier", "fence", "crate", "pillar",
+// "obstacle"). That fallback is BoxDead's own and is never applied to decide
+// anything for another game. LevelEdit++ docs/MX_FORMAT.md is the reference.
 //
 // A tile entry may carry an optional "collision": [x, y, w, h] footprint in
 // tile-local pixels, which is what blocks movement instead of the whole tile.
-// LevelEdit++ ignores keys it does not know, so a map carrying one still opens
-// in the editor.
-//
-// Tiles whose name contains an explosive keyword ("barrel", "drum",
-// "explosive", "tnt") are not drawn or collided as tiles at all: their
-// placements are handed to the Game, which spawns a destructible Barrel
-// entity at each one so they can be shot, explode, and chain-react.
+// It says *where* a solid tile blocks, not whether it does. LevelEdit++ writes
+// it from the Inspector and keeps it when a map is saved.
 #pragma once
 
 #include "boxdead/texture.hpp"

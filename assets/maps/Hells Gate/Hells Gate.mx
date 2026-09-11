@@ -1,8 +1,10 @@
 {
+    "formatVersion": 3,
     "name": "Hells Gate",
     "tiles": {
         "Ground": {
             "filepath": "exports/Hells Gate/assets/Ground.bmp",
+            "flags": [],
             "locations": [
                 [
                     32,
@@ -33902,6 +33904,9 @@
         },
         "Wall": {
             "filepath": "exports/Hells Gate/assets/Wall.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     0,
@@ -39213,6 +39218,9 @@
         },
         "Barrel": {
             "filepath": "exports/Hells Gate/assets/Barrel.bmp",
+            "flags": [
+                "explosive"
+            ],
             "locations": [
                 [
                     192,
@@ -39582,6 +39590,9 @@
         },
         "Obsidian Rock": {
             "filepath": "exports/Hells Gate/assets/Obsidian Rock.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     2208,
@@ -40503,6 +40514,9 @@
         },
         "Cinder Block": {
             "filepath": "exports/Hells Gate/assets/Cinder Block.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     128,
@@ -41319,6 +41333,7 @@
         },
         "Ash Scrub": {
             "filepath": "exports/Hells Gate/assets/Ash Scrub.bmp",
+            "flags": [],
             "locations": [
                 [
                     2304,
