@@ -1,8 +1,10 @@
 {
+    "formatVersion": 3,
     "name": "Asylum",
     "tiles": {
         "Ground": {
             "filepath": "exports/Asylum/assets/Ground.bmp",
+            "flags": [],
             "locations": [
                 [
                     32,
@@ -34259,6 +34261,9 @@
         },
         "Wall": {
             "filepath": "exports/Asylum/assets/Wall.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     0,
@@ -39213,6 +39218,9 @@
         },
         "Barrel": {
             "filepath": "exports/Asylum/assets/Barrel.bmp",
+            "flags": [
+                "explosive"
+            ],
             "locations": [
                 [
                     288,
@@ -39631,6 +39639,9 @@
         },
         "Rubble Rock": {
             "filepath": "exports/Asylum/assets/Rubble Rock.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     384,
@@ -40538,6 +40549,9 @@
         },
         "Ward Pillar": {
             "filepath": "exports/Asylum/assets/Ward Pillar.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     2464,
@@ -41305,6 +41319,7 @@
         },
         "Fungal Bloom": {
             "filepath": "exports/Asylum/assets/Fungal Bloom.bmp",
+            "flags": [],
             "locations": [
                 [
                     1760,

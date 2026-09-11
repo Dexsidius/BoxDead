@@ -1,8 +1,10 @@
 {
+    "formatVersion": 3,
     "name": "Sewers",
     "tiles": {
         "Ground": {
             "filepath": "exports/Sewers/assets/Ground.bmp",
+            "flags": [],
             "locations": [
                 [
                     32,
@@ -33748,6 +33750,9 @@
         },
         "Wall": {
             "filepath": "exports/Sewers/assets/Wall.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     0,
@@ -39213,6 +39218,9 @@
         },
         "Barrel": {
             "filepath": "exports/Sewers/assets/Barrel.bmp",
+            "flags": [
+                "explosive"
+            ],
             "locations": [
                 [
                     256,
@@ -39589,6 +39597,9 @@
         },
         "Slime Rock": {
             "filepath": "exports/Sewers/assets/Slime Rock.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     448,
@@ -40258,6 +40269,9 @@
         },
         "Sludge Crate": {
             "filepath": "exports/Sewers/assets/Sludge Crate.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     2240,
@@ -40997,6 +41011,7 @@
         },
         "Algae": {
             "filepath": "exports/Sewers/assets/Algae.bmp",
+            "flags": [],
             "locations": [
                 [
                     3072,

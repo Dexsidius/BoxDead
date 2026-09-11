@@ -19,10 +19,13 @@ Props do not tile -- they are drawn once and composited over the scene's own
 floor tile, then saved opaque, because SDL_LoadBMP has no reliable alpha path
 and baking guarantees a prop sits on ground matching its scene.
 
-Tile names drive behaviour in-game (see src/tilemap.cpp): a name containing
-wall/block/rock/stone/crate/pillar/obstacle/... is solid, one containing
-barrel/drum/explosive/tnt becomes a destructible Barrel entity, anything else
-is walkable decoration.
+What each tile does in-game is written into the .mx as "flags" (format
+version 3): walls and props are "solid", barrels are "explosive" and become
+destructible Barrel entities, and decor carries no flags so the player walks
+over it. The flags come from where this script puts each tile - a prop is
+placed as an obstacle, decor as something to walk across - not from the tile's
+name, so a tile can be called whatever reads best. (BoxDead only falls back to
+reading names for a map that has no flags at all.)
 
 Paths inside the .mx use LevelEdit++'s own convention
 ("exports/<Level>/assets/<Tile>.bmp") so a scene folder can be dropped into the
@@ -51,6 +54,12 @@ TILE = 32
 # Walkable decoration stays at 0: something you can stroll through should not
 # look like it stands up.
 LAYER_ELEVATION = {'Ground': 0, 'Wall': 22, 'Barrel': 0}
+
+# What each fixed layer means to the game, written into the .mx as "flags".
+# Props are added as "solid" and decor as walkable per scene, in main(), because
+# that is how build_layout() places them: props mark their cells occupied and
+# decor does not.
+LAYER_FLAGS = {'Ground': [], 'Wall': ['solid'], 'Barrel': ['explosive']}
 PROP_ELEVATION = {'rock': 12, 'headstone': 18, 'bush': 14,
                   'bush_small': 0, 'mushroom': 0, 'tree': 26, 'tree_dead': 24}
 
@@ -615,12 +624,23 @@ def main():
         save_bmp(bake(barrel_prop(random.Random(seed + 99), bbody, bband), floor, TILE),
                  os.path.join(asset_dir, 'Barrel.bmp'))
 
+        # Meaning, from the role each tile was placed in rather than its name.
+        flags = {layer: list(meaning) for layer, meaning in LAYER_FLAGS.items()}
+        for tname, _kind, _colour in scene['props']:
+            flags[tname] = ['solid']
+        for tname, _kind, _colour in scene['decor']:
+            flags[tname] = []
+
         layers = build_layout(scene, random.Random(seed))
         doc = {
+            'formatVersion': 3,
             'name': name,
             'tiles': {
+                # flags[tname] rather than .get(): a layer with no known meaning
+                # should stop the build, not quietly ship as plain floor.
                 tname: ({'filepath': f'exports/{name}/assets/{tname}.bmp',
-                         # [x, y, w, h, elevation] - ".mx" format version 2
+                         'flags': flags[tname],
+                         # [x, y, w, h, elevation] - ".mx" format version 2+
                          'locations': [loc + [elevations.get(tname, 0)]
                                        for loc in locs]}
                         | ({'collision': footprints[tname]}
@@ -628,7 +648,9 @@ def main():
                 for tname, locs in layers.items()
             },
         }
-        with open(os.path.join(out_dir, name + '.mx'), 'w') as f:
+        # newline='\n': text mode would write CRLF on Windows, and every map in
+        # the repository is LF, so a regeneration there would rewrite every line.
+        with open(os.path.join(out_dir, name + '.mx'), 'w', newline='\n') as f:
             json.dump(doc, f, indent=4)
 
         total = sum(len(v) for v in layers.values())

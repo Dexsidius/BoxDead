@@ -69,6 +69,46 @@ bool name_is_explosive(const std::string& name) {
     return false;
 }
 
+// What one tile entry means to the game, decided once when the map loads.
+struct TileMeaning {
+    bool solid = false;
+    bool explosive = false;
+};
+
+// ".mx" format version 3 lets a map say what a tile means through a "flags"
+// list. When an entry has one - even an empty one - that list is the whole
+// answer: an empty list is the level author saying the tile means nothing
+// special, and a tile's name no longer decides anything. Flags BoxDead does not
+// act on are ignored, so a tileset can carry meanings for other games too.
+//
+// A map with no "flags" key predates them, so its meaning is read from the tile
+// name exactly as it always was, and older maps behave as they did.
+//
+// LevelEdit++ docs/MX_FORMAT.md spells this rule out; every game reading the
+// format follows it, so the same map means the same thing in each of them.
+TileMeaning read_meaning(const std::string& name, const json& entry) {
+    TileMeaning meaning;
+
+    const auto flags = entry.find("flags");
+    if (flags != entry.end() && flags->is_array()) {
+        for (const auto& flag : *flags) {
+            if (!flag.is_string()) continue;
+            // The editor writes flags lowercase; a hand-edited map might not.
+            std::string lower;
+            for (char c : flag.get<std::string>()) {
+                lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+            }
+            if (lower == "solid") meaning.solid = true;
+            if (lower == "explosive") meaning.explosive = true;
+        }
+        return meaning;
+    }
+
+    meaning.explosive = name_is_explosive(name);
+    meaning.solid = !meaning.explosive && name_is_solid(name);
+    return meaning;
+}
+
 }  // namespace
 
 Tilemap::~Tilemap() { clear(); }
@@ -136,10 +176,12 @@ bool Tilemap::load(SDL_Renderer* r, const std::string& mx_path) {
         const json& entry = it.value();
         if (!entry.is_object()) continue;
 
+        const TileMeaning meaning = read_meaning(tile_name, entry);
+
         // Explosive tiles never become tiles: collect their placements for
         // the Game to spawn Barrel entities from, and skip loading their .bmp
         // (barrels are drawn as 3D props, not flat tile images).
-        if (name_is_explosive(tile_name)) {
+        if (meaning.explosive) {
             const auto& locs = entry.value("locations", json::array());
             if (!locs.is_array()) continue;
             for (const auto& loc : locs) {
@@ -181,7 +223,7 @@ bool Tilemap::load(SDL_Renderer* r, const std::string& mx_path) {
             textures_.push_back(std::move(t));
         }
 
-        const bool solid = name_is_solid(tile_name);
+        const bool solid = meaning.solid;
 
         // Optional tight collision footprint, in tile-local pixels. Without it
         // a prop blocks its whole tile, which reads in-game as an invisible

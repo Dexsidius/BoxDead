@@ -1,8 +1,10 @@
 {
+    "formatVersion": 3,
     "name": "The Sprawl",
     "tiles": {
         "Ground": {
             "filepath": "exports/The Sprawl/assets/Ground.bmp",
+            "flags": [],
             "locations": [
                 [
                     32,
@@ -40216,6 +40218,9 @@
         },
         "Wall": {
             "filepath": "exports/The Sprawl/assets/Wall.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     0,
@@ -46157,6 +46162,9 @@
         },
         "Barrel": {
             "filepath": "exports/The Sprawl/assets/Barrel.bmp",
+            "flags": [
+                "explosive"
+            ],
             "locations": [
                 [
                     96,
@@ -46561,6 +46569,9 @@
         },
         "Sprawl Rock": {
             "filepath": "exports/The Sprawl/assets/Sprawl Rock.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     256,
@@ -47496,6 +47507,9 @@
         },
         "Ruin Pillar": {
             "filepath": "exports/The Sprawl/assets/Ruin Pillar.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     2816,
@@ -48368,6 +48382,9 @@
         },
         "Sprawl Tree Obstacle": {
             "filepath": "exports/The Sprawl/assets/Sprawl Tree Obstacle.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     448,
@@ -48540,6 +48557,7 @@
         },
         "Weeds": {
             "filepath": "exports/The Sprawl/assets/Weeds.bmp",
+            "flags": [],
             "locations": [
                 [
                     2720,

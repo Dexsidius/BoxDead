@@ -618,22 +618,24 @@ containing the `.mx` plus an `assets/` subfolder of `.bmp` tile images:
 
 ```json
 {
-    "formatVersion": 2,
+    "formatVersion": 3,
     "name": "Courtyard",
     "tiles": {
         "Ground": {
             "filepath": "assets/Ground.bmp",
+            "flags": [],
             "locations": [[32, 32, 32, 32, 0], [64, 32, 32, 32, 0], ...]
         },
-        "Wall":  { "filepath": "assets/Wall.bmp",  "locations": [...] },
-        "Block": { "filepath": "assets/Block.bmp", "locations": [...] },
-        "Barrel": { "filepath": "assets/Barrel.bmp", "locations": [...] }
+        "Wall":  { "filepath": "assets/Wall.bmp",  "flags": ["solid"], "locations": [...] },
+        "Block": { "filepath": "assets/Block.bmp", "flags": ["solid"], "locations": [...] },
+        "Barrel": { "filepath": "assets/Barrel.bmp", "flags": ["explosive"], "locations": [...] }
     }
 }
 ```
 
 - `filepath` is relative to the `.mx` file's directory (the editor writes
   `assets/<TileName>.bmp`).
+- `flags` says what the tile means -- see "Tile flags" below.
 - `locations` is a list of `[x, y, w, h, elevation]` world-pixel placements
   (default tile size 32x32). The player/enemies collide with solid tiles.
 
@@ -656,27 +658,43 @@ a raised tile blocks exactly the ground it was placed on.
 load flat, and readers that only know the four-element form ignore anything
 past it, so the two versions interoperate in both directions.
 
-### Explosive tiles (barrels)
+### Tile flags
 
-A tile is an **explosive barrel** if its name contains (case-insensitive):
-`barrel`, `drum`, `explosive`, `tnt`. This is checked before the solid test, so
-"Explosive Barrel" becomes a barrel rather than a wall. Those placements are
-lifted out of the tile list entirely and become `Barrel` entities -- see
-"Explosive barrels" above.
+`.mx` format version 3 lets a map say what each tile *means*, with a `flags`
+list, instead of leaving the game to guess from the tile's name. Set them in
+LevelEdit++'s Inspector. The format is shared with other games, so it is
+documented once, in LevelEdit++'s `docs/MX_FORMAT.md`.
 
-### Solid tiles (collision)
+BoxDead acts on two flags:
 
-The `.mx` format is purely visual, so BoxDead infers collision from the tile
-**name**. A tile is solid (blocks movement) if its name contains any of
-(case-insensitive): `wall`, `block`, `rock`, `stone`, `barrier`, `fence`,
-`crate`, `pillar`, `obstacle`. Name your blocking tiles accordingly in the
-editor and the player/enemies will slide along them instead of walking through.
+- **`solid`** -- blocks movement. The player and enemies slide along it.
+- **`explosive`** -- not drawn as a tile at all. Its placements are lifted out of
+  the tile list and become `Barrel` entities -- see "Explosive barrels" above.
+
+Any other flag is ignored, so one tileset can carry meanings for several games.
+Matching is case-insensitive. An entry with a `flags` key is taken exactly as
+written -- `flags: []` means the tile is plain floor even if its name says
+"Hedge Block".
+
+### Maps without flags
+
+A tile entry with no `flags` key has never been given a meaning, so BoxDead
+reads it the way it always has, from the tile's **name** (case-insensitive):
+
+- contains `barrel`, `drum`, `explosive` or `tnt` -> explosive. Checked first,
+  so "Explosive Barrel" becomes a barrel rather than a wall.
+- otherwise contains `wall`, `block`, `rock`, `stone`, `barrier`, `fence`,
+  `crate`, `pillar` or `obstacle` -> solid.
+
+Every map made before flags existed keeps behaving exactly as it did. This
+fallback is BoxDead's own: other games that read `.mx` have their own, and the
+editor never writes a name guess into a map on your behalf.
 
 ### Adding a new scene
 
-1. Build a map in LevelEdit++ using `.bmp` tiles (32x32). Name walls/blocks with a
-   solid keyword if they should block movement, and name a layer `Barrel` for
-   explosive drums.
+1. Build a map in LevelEdit++ using `.bmp` tiles (32x32). Tick **solid** in the
+   Inspector for tiles that should block movement, and **explosive** for barrels.
+   (Maps without flags still work: see "Maps without flags" above.)
 2. Export to `.mx` into a folder like `assets/maps/MyLevel/` with its tile `.bmp`s
    in `assets/maps/MyLevel/assets/`.
 3. Add a `Level` entry in `src/game.cpp` (`kLevels[]`) pointing `map_path` at the

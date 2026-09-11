@@ -1,8 +1,10 @@
 {
+    "formatVersion": 3,
     "name": "Courtyard",
     "tiles": {
         "Ground": {
             "filepath": "exports/Courtyard/assets/Ground.bmp",
+            "flags": [],
             "locations": [
                 [
                     32,
@@ -34231,6 +34233,9 @@
         },
         "Wall": {
             "filepath": "exports/Courtyard/assets/Wall.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     0,
@@ -39213,6 +39218,9 @@
         },
         "Barrel": {
             "filepath": "exports/Courtyard/assets/Barrel.bmp",
+            "flags": [
+                "explosive"
+            ],
             "locations": [
                 [
                     256,
@@ -39589,6 +39597,9 @@
         },
         "Mossy Rock": {
             "filepath": "exports/Courtyard/assets/Mossy Rock.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     512,
@@ -40412,6 +40423,9 @@
         },
         "Hedge Block": {
             "filepath": "exports/Courtyard/assets/Hedge Block.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     1664,
@@ -41277,6 +41291,9 @@
         },
         "Courtyard Tree Obstacle": {
             "filepath": "exports/Courtyard/assets/Courtyard Tree Obstacle.bmp",
+            "flags": [
+                "solid"
+            ],
             "locations": [
                 [
                     1792,
@@ -41442,6 +41459,7 @@
         },
         "Grass Tuft": {
             "filepath": "exports/Courtyard/assets/Grass Tuft.bmp",
+            "flags": [],
             "locations": [
                 [
                     2112,
