@@ -40,7 +40,11 @@ std::unique_ptr<Texture> make_solid_sprite_texture(SDL_Renderer* r,
     const SDL_Color dark{static_cast<Uint8>(base.r * 0.55f),
                          static_cast<Uint8>(base.g * 0.55f),
                          static_cast<Uint8>(base.b * 0.55f), base.a};
-    const int b = 4;  // border thickness
+    // Border thickness, scaled so it can never swallow the whole sprite: at
+    // size 8 a fixed 4px border made every pixel "border", so the smallest
+    // sprites came out as flat dark squares instead of a bright dot with a
+    // rim - which is exactly why bullets were so hard to see.
+    const int b = std::min(4, std::max(1, size / 4 - 1));
     for (int y = 0; y < size; ++y) {
         for (int x = 0; x < size; ++x) {
             const bool border = x < b || x >= size - b || y < b ||

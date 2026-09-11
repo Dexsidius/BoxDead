@@ -360,6 +360,38 @@ Barrels got the same treatment from the other side: the drum is drawn narrower
 than its cell, so the dynamic obstacle the player and enemies collide with is
 80% of the tile rather than all of it.
 
+## The bullet sprite
+
+The bullet is modelled and rendered in Blender rather than drawn procedurally
+like the rest of the art, because a projectile has one job - being visible
+while it crosses a busy floor - and a shaded round with a hot tip does that
+better than a coloured square.
+
+```bash
+blender --background --factory-startup --python tools/blender_bullet.py
+python tools/build_bullet.py        # -> assets/sprites/bullet.bmp
+```
+
+`blender_bullet.py` builds the round from primitives (brass case, ogive nose,
+emissive tracer tip, case rim), lights it from the upper left to match how the
+iso characters are lit, and renders it top-down through an orthographic camera
+onto a transparent film. Running it `--background --factory-startup` means it
+never touches an open Blender session. `build_bullet.py` crops, scales to 22px
+and adds a **dark rim one pixel proud of the silhouette** - that rim is what
+makes it read against the Asylum's pale cobble *and* the Graveyard's dark
+stone, the same trick the characters' outlines use.
+
+The art points +X, matching the gun sprites' "muzzle points right" convention,
+and `Projectile::render` rotates it to the velocity angle, so rounds fly nose
+first. It is saved as a 32-bit BMP: SDL_LoadBMP keeps the alpha channel, so
+this needs no SDL_image dependency. If the file is missing the old square is
+still used.
+
+While fixing this: `make_solid_sprite_texture` used a fixed 4px border, so at
+size 8 *every* pixel qualified as border and the bullet came out as a flat dark
+olive square rather than a bright dot with a rim. The border now scales with
+the sprite, which was the real reason bullets vanished against light floors.
+
 ## Impact effects
 
 Every shot that lands throws a short burst of particles from the impact point,
