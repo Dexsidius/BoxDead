@@ -33,6 +33,9 @@ public:
 
     void set_texture(Texture* tex) { sprite_.texture = tex; }
     void update(float dt, const GameContext& ctx) override;
+    // Drawn at the texture's own size and rotated to the direction of travel,
+    // so a bullet sprite points where it is going instead of flying sideways.
+    void render(SDL_Renderer* r, float cam_x, float cam_y) const override;
 
     // Arm this projectile with an explosive payload. `fuse` > 0 makes it a
     // thrown grenade (drags to a stop, detonates on the timer); otherwise it

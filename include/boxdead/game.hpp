@@ -255,6 +255,7 @@ private:
     std::unique_ptr<Texture> weapon_tex_shotgun_;
     std::unique_ptr<Texture> weapon_tex_machinegun_;
     std::unique_ptr<Texture> gun_hand_tex_[Player::kSlotCount];  // per weapon kind
+    std::unique_ptr<Texture> bullet_tex_;    // modelled round (assets/sprites)
     std::unique_ptr<Texture> rocket_tex_;    // rocket in flight
     std::unique_ptr<Texture> grenade_tex_;   // thrown frag
     std::unique_ptr<Texture> concussion_tex_;

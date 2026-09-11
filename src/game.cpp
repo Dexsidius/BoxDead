@@ -172,6 +172,17 @@ bool Game::init() {
         "assets/dejavu-sans.ttf",
         "../assets/dejavu-sans.ttf",
     };
+    // The bullet is authored art (Blender render -> tools/build_bullet.py)
+    // rather than a coloured square: a small bright dot vanished against the
+    // pale stone floors. It carries its own dark rim so it reads on light and
+    // dark ground alike. If the file is missing the old square still works.
+    for (const std::string& p : {base_dir + "assets/sprites/bullet.bmp",
+                                 base_dir + "../assets/sprites/bullet.bmp",
+                                 std::string("assets/sprites/bullet.bmp")}) {
+        bullet_tex_ = Texture::load(renderer_, p);
+        if (bullet_tex_) break;
+    }
+
     bool font_ok = false;
     std::string font_path;
     for (const std::string& p : font_candidates) {
@@ -2006,7 +2017,7 @@ Texture* Game::projectile_tex_for(WeaponKind k) {
         case WeaponKind::Grenade: return grenade_tex_.get();
         case WeaponKind::Concussion: return concussion_tex_.get();
         case WeaponKind::Lure: return lure_tex_.get();
-        default: return projectile_tex_.get();
+        default: return bullet_tex_ ? bullet_tex_.get() : projectile_tex_.get();
     }
 }
 
@@ -2039,6 +2050,7 @@ void Game::shutdown() {
     weapon_tex_shotgun_.reset();
     weapon_tex_machinegun_.reset();
     for (auto& g : gun_hand_tex_) g.reset();
+    bullet_tex_.reset();
     rocket_tex_.reset();
     grenade_tex_.reset();
     concussion_tex_.reset();

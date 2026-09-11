@@ -43,6 +43,27 @@ void Projectile::on_hit() {
     }
 }
 
+void Projectile::render(SDL_Renderer* r, float cam_x, float cam_y) const {
+    Texture* tex = sprite_.texture;
+    if (!tex || !tex->get()) {
+        Entity::render(r, cam_x, cam_y);  // fall back to the flat quad
+        return;
+    }
+    // The art points +x (same convention as the gun sprites), so the rotation
+    // is just the velocity angle.
+    const double angle =
+        std::atan2(static_cast<double>(vel.y), static_cast<double>(vel.x)) *
+        180.0 / 3.14159265358979323846;
+    const float w = tex->w();
+    const float h = tex->h();
+    const SDL_FRect dst{pos.x - cam_x - w * 0.5f, pos.y - cam_y - h * 0.5f, w,
+                        h};
+    SDL_SetTextureColorMod(tex->get(), sprite_.color.r, sprite_.color.g,
+                           sprite_.color.b);
+    SDL_RenderTextureRotated(r, tex->get(), nullptr, &dst, angle, nullptr,
+                             SDL_FLIP_NONE);
+}
+
 void Projectile::update(float dt, const GameContext& ctx) {
     if (thrown()) {
         const float drag = std::max(0.0f, 1.0f - kThrownDrag * dt);
